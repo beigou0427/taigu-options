@@ -1,105 +1,192 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import plotly.express as px
 import numpy as np
+from scipy.stats import norm
+import plotly.express as px
+import time
 
-st.set_page_config(layout="wide")
+# ----------------------------------------------------
+# 1. 核心設定
+# ----------------------------------------------------
+st.set_page_config(page_title="台指期權 AI", layout="wide", page_icon="🔥")
 
 st.markdown("""
-# 🔥 **台指期權 AI (實戰版)**
-**抓取真實台指，即時運算最佳合約**
+# 🔥 **台指期權 AI (高精準擬真版)**
+**即時台指報價 + BS模型精算權利金**
 """)
 
-# 1. 抓取真實台指價格
-@st.cache_data(ttl=60)
-def get_twii():
-    try:
-        # 抓取台指期貨或大盤
-        df = yf.download("^TWII", period="1d", interval="1m")
-        price = df['Close'].iloc[-1]
-        return float(price)
-    except:
-        return 23250.0  # 備用
-
-S_current = get_twii()
-
-# 2. 自動生成合約 (依據台指價格推算)
-def generate_contracts(spot_price):
-    contracts = []
+# ----------------------------------------------------
+# 2. 核心函數：Black-Scholes 定價模型
+# ----------------------------------------------------
+def black_scholes(S, K, T, r, sigma, option_type='CALL'):
+    """
+    S: 標的現價
+    K: 履約價
+    T: 到期時間(年)
+    r: 無風險利率
+    sigma: 波動率
+    """
+    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
     
-    # 履約價範圍：上下 500 點
-    strikes = range(int(spot_price/100)*100 - 500, int(spot_price/100)*100 + 600, 100)
-    
-    # 月份
-    months = [202606, 202609, 202612]
-    
-    for m in months:
-        days_left = 30 if m == 202606 else 120
-        t = days_left / 365
+    if option_type == 'CALL':
+        price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+        delta = norm.cdf(d1)
+    else:
+        price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+        delta = norm.cdf(d1) - 1
         
-        for k in strikes:
-            # 簡化 BS 模型估算權利金
-            # Call Price ≈ Max(0, S - K) + TimeValue
-            intrinsic = max(0, spot_price - k)
-            time_value = spot_price * 0.02 * t  # 假設時間價值
-            price = intrinsic + time_value
-            
-            if price < 10: continue
-            
-            # 槓桿 = (Delta * S) / Price (Delta 簡化為 0.5~1.0)
-            delta = 0.5 + (intrinsic / spot_price) * 0.5
-            delta = min(0.95, delta)
-            lev = (delta * spot_price) / price
-            
-            contracts.append({
-                '月份': str(m),
-                '履約價': k,
-                '權利金': round(price, 1),
-                '槓桿': round(lev, 1),
-                'Delta': round(delta, 2),
-                '類型': 'CALL'
-            })
-    return pd.DataFrame(contracts)
+    return price, delta
 
-df = generate_contracts(S_current)
+# ----------------------------------------------------
+# 3. 抓取即時台指
+# ----------------------------------------------------
+@st.cache_data(ttl=30)  # 30秒更新一次
+def get_real_twii():
+    try:
+        # 嘗試抓台指期貨或加權指數
+        ticker = yf.Ticker("^TWII")
+        data = ticker.history(period="1d", interval="1m")
+        if not data.empty:
+            return data['Close'].iloc[-1], data.index[-1]
+    except:
+        pass
+    return 23500.0, pd.Timestamp.now() # 備用值
 
-# 3. 顯示大盤
+current_price, update_time = get_real_twii()
+
+# ----------------------------------------------------
+# 4. 自動生成擬真合約
+# ----------------------------------------------------
+def generate_options(spot_price):
+    options = []
+    
+    # 設定參數
+    r = 0.015  # 利率 1.5%
+    sigma = 0.18 # 波動率 18% (台指平均)
+    
+    # 產生履約價：價平上下 10 檔 (每檔 100 點)
+    atm = round(spot_price / 100) * 100
+    strikes = range(atm - 1000, atm + 1000, 100)
+    
+    # 合約月份 (假設)
+    contracts = {
+        '202606 (近月)': 30/365,   # 剩30天
+        '202609 (季月)': 120/365,  # 剩120天
+        '202612 (遠月)': 210/365   # 剩210天
+    }
+    
+    for month_name, T in contracts.items():
+        for K in strikes:
+            # 計算 CALL
+            call_price, call_delta = black_scholes(spot_price, K, T, r, sigma, 'CALL')
+            if call_price >= 5: # 過濾掉太便宜的
+                lev = (call_delta * spot_price) / call_price
+                options.append({
+                    '月份': month_name,
+                    '履約價': K,
+                    '類型': 'CALL 📈',
+                    '權利金': round(call_price, 1),
+                    'Delta': round(call_delta, 2),
+                    '槓桿': round(lev, 1),
+                    '價內': K < spot_price
+                })
+                
+            # 計算 PUT
+            put_price, put_delta = black_scholes(spot_price, K, T, r, sigma, 'PUT')
+            if put_price >= 5:
+                lev = (abs(put_delta) * spot_price) / put_price
+                options.append({
+                    '月份': month_name,
+                    '履約價': K,
+                    '類型': 'PUT 📉',
+                    '權利金': round(put_price, 1),
+                    'Delta': round(put_delta, 2),
+                    '槓桿': round(lev, 1),
+                    '價內': K > spot_price
+                })
+                
+    return pd.DataFrame(options)
+
+df = generate_options(current_price)
+
+# ----------------------------------------------------
+# 5. UI 介面展示
+# ----------------------------------------------------
 col1, col2 = st.columns(2)
-col1.metric("📈 台指現價 (Real-time)", f"{int(S_current):,}")
-col2.metric("🟢 狀態", "連線正常")
+col1.metric("📈 加權指數 (Real-time)", f"{int(current_price):,}", 
+            f"最後更新: {update_time.strftime('%H:%M')}")
+col2.metric("🟢 資料狀態", "yfinance + BS模型推算")
 
-# 4. 操作區
-col_m, col_l = st.columns(2)
-month = col_m.selectbox("📅 月份", df['月份'].unique())
-lev_target = col_l.slider("⚡ 目標槓桿", 2.0, 15.0, 3.5)
+st.markdown("---")
 
-# 5. 搜尋
-if st.button("🎯 **找合約！**", type="primary"):
+# 操作區
+c1, c2, c3 = st.columns(3)
+type_filter = c1.radio("方向", ["看漲 (CALL)", "看跌 (PUT)"])
+month_filter = c2.selectbox("合約月份", df['月份'].unique())
+lev_filter = c3.slider("目標槓桿倍數", 2.0, 20.0, 5.0)
+
+# 篩選邏輯
+target_type = 'CALL' if '看漲' in type_filter else 'PUT'
+filtered_df = df[
+    (df['月份'] == month_filter) & 
+    (df['類型'].str.contains(target_type))
+].copy()
+
+# 找最佳合約
+if st.button("🎯 **智能搜尋最佳合約**", type="primary", use_container_width=True):
     
-    target_df = df[df['月份'] == month].copy()
+    # 算出槓桿差異
+    filtered_df['差'] = abs(filtered_df['槓桿'] - lev_filter)
+    filtered_df = filtered_df.sort_values('差')
     
-    # 找最接近槓桿
-    target_df['差'] = abs(target_df['槓桿'] - lev_target)
-    best = target_df.sort_values('差').iloc[0]
-    
+    best = filtered_df.iloc[0]
     cost = int(best['權利金'] * 50)
     
     st.balloons()
     
+    # 推薦卡片
     st.markdown(f"""
-    <div style='background: #d4edda; padding: 25px; border-radius: 15px; border: 3px solid #28a745; text-align: center;'>
-    <h1 style='color: #155724;'>🚀 **{best['履約價']:,}**</h1>
-    <h2 style='color: #155724;'>⚡ **{best['槓桿']}x** | 💰 **${cost:,}**</h2>
-    <code style='background: white; padding: 10px; border-radius: 5px; font-size: 18px;'>
-    TXO {month} C{best['履約價']} 買進 1 口
-    </code>
+    <div style='background: linear-gradient(to right, #e0f7fa, #ffffff); 
+                padding: 20px; border-radius: 15px; border-left: 6px solid #00acc1; 
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);'>
+        <h2 style='color: #006064; margin:0;'>🏆 最佳推薦：{best['履約價']} {best['類型']}</h2>
+        <div style='display: flex; justify-content: space-around; margin-top: 15px;'>
+            <div>
+                <p style='color: #555; font-size: 14px; margin:0;'>權利金</p>
+                <h3 style='margin:0;'>{best['權利金']}</h3>
+            </div>
+            <div>
+                <p style='color: #555; font-size: 14px; margin:0;'>槓桿倍數</p>
+                <h3 style='margin:0; color: #d81b60;'>{best['槓桿']}x</h3>
+            </div>
+            <div>
+                <p style='color: #555; font-size: 14px; margin:0;'>一張成本</p>
+                <h3 style='margin:0;'>${cost:,}</h3>
+            </div>
+        </div>
+        <hr style='border: 0; border-top: 1px solid #ddd; margin: 15px 0;'>
+        <code style='background: #fff; padding: 8px 15px; border-radius: 5px; font-weight: bold; color: #333;'>
+        下單指令：TXO {month_filter.split(' ')[0]} {target_type[0]}{best['履約價']} 買進 1 口
+        </code>
     </div>
     """, unsafe_allow_html=True)
     
-    st.dataframe(target_df[['履約價','權利金','槓桿','Delta']].sort_values('槓桿'))
+    # 詳細表格
+    st.markdown("### 📊 合約清單 (依槓桿排序)")
+    st.dataframe(
+        filtered_df[['履約價', '權利金', '槓桿', 'Delta', '價內']].head(10),
+        use_container_width=True
+    )
     
-    fig = px.scatter(target_df, x='履約價', y='槓桿', color='Delta', title='履約價 vs 槓桿')
-    st.plotly_chart(fig)
+    # 視覺化圖表
+    fig = px.scatter(
+        filtered_df, x='履約價', y='槓桿', color='Delta', size='權利金',
+        title=f'{month_filter} {target_type} 槓桿分佈圖',
+        hover_data=['權利金', '槓桿']
+    )
+    fig.add_hline(y=lev_filter, line_dash="dash", line_color="red", annotation_text="目標槓桿")
+    st.plotly_chart(fig, use_container_width=True)
 
-st.caption("數據來源：Yahoo Finance 即時運算")
+st.caption("ℹ️ 本工具使用 Black-Scholes 模型依據即時台指推算合理價格，與市場報價可能略有誤差。")
