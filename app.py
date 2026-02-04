@@ -1,98 +1,198 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
-from datetime import datetime
+import yfinance as yf
+from datetime import date, timedelta
 import plotly.express as px
+import numpy as np
+from scipy.stats import norm
+import requests
 
-st.set_page_config(layout="wide")
-st.markdown("### 🔥 台指期權（Yahoo 動態版）")
+st.set_page_config(page_title="台指期權新手器", layout="wide", page_icon="🔥")
 
-# 加權指數
-@st.cache_data(ttl=30)
-def get_twx():
-    ticker = yf.Ticker("^TWII")
-    return ticker.fast_info['last_price']
+st.markdown("# 🔥 **台指期權新手器**\n**免 FinMind！官方資料直接抓！**")
 
-twx = get_twx()
-st.metric("📈 加權指數", f"{twx:,.0f}")
-
-# 動態生成 TXO 代碼
-def generate_txo_symbols(base_price, months_ahead=1):
-    """生成真實 TXO 代碼"""
-    symbols = []
-    
-    # 下個月第三週三（台指結算日）
-    target_month = (datetime.now().month + months_ahead - 1) % 12 + 1
-    target_year = datetime.now().year + (target_month > datetime.now().month)
-    expiry_day = 19  # 第三週三約19日
-    
-    # 附近履約價（50點間距）
-    strikes = [base_price // 50 * 50 + i*50 for i in [-100, -50, 0, 50, 100]]
-    
-    for strike in strikes:
-        call_sym = f"TXOC{target_year%100:02d}{target_month:02d}{expiry_day:02d}{int(strike):05d}"
-        put_sym = f"TXOP{target_year%100:02d}{target_month:02d}{expiry_day:02d}{int(strike):05d}"
-        symbols.extend([call_sym, put_sym])
-    
-    return symbols[:10]  # Top 10
-
-# 生成真實代碼
-live_symbols = generate_txo_symbols(twx)
-st.write("**🔍 動態生成的真實 TXO 代碼**：")
-for sym in live_symbols:
-    st.code(sym, language="")
-
-# 抓批量報價
-if st.button("🚀 批量抓取 10 檔即時期權"):
-    with st.spinner("連線 Yahoo Finance..."):
-        results = []
-        for symbol in live_symbols:
-            try:
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="5d")  # 多抓幾天找資料
-                if not hist.empty and hist['Close'].iloc[-1] > 0:
-                    results.append({
-                        '代碼': symbol,
-                        '權利金': hist['Close'].iloc[-1],
-                        '成交量': int(hist['Volume'].iloc[-1]),
-                        '漲跌': (hist['Close'].iloc[-1] - hist['Open'].iloc[-1]) / hist['Open'].iloc[-1] * 100
-                    })
-            except:
-                continue
+# ---------------------------------
+# 新手教學
+# ---------------------------------
+with st.expander("📚 **新手必看教學**", expanded=True):
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        ### **選擇權超簡單**
+        **CALL** 📈 = 看好會漲  
+        **PUT** 📉 = 怕會大跌  
         
-        if results:
-            df = pd.DataFrame(results)
-            df['估槓桿'] = (0.5 * twx) / df['權利金']  # Delta=0.5 估計
-            df['成本約'] = (df['權利金'] * 50).round(0)
-            
-            st.success(f"✅ 抓到 {len(df)} 檔真實 TXO！")
-            
-            # 最佳推薦
-            best_high_lev = df.nlargest(1, '估槓桿')
-            st.markdown(f"""
-            ## 🏆 **高槓桿首選**
-            **代碼**：`{best_high_lev['代碼'].iloc[0]}`  
-            **權利金**：{best_high_lev['權利金'].iloc[0]:.2f}  
-            **估槓桿**：{best_high_lev['估槓桿'].iloc[0]:.1f}x  
-            **成本**：${best_high_lev['成本約'].iloc[0]:,}
-            """)
-            
-            st.dataframe(df[['代碼', '權利金', '成交量', '估槓桿', '成本約']].round(2))
-            
-            # 可視化
-            fig = px.scatter(df, x='權利金', y='估槓桿', size='成交量',
-                           hover_data=['代碼'], title="真實 TXO 權利金 vs 槓桿")
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.warning("⚠️ 暫無活躍交易，可能是非交易時段或合約不活躍")
+        **槓桿 = 用 1 元控制 N 元台指**
+        - 台指漲 1%，你賺槓桿 × 1%
+        """)
+    with col2:
+        st.markdown("""
+        ### **怎麼選？**
+        | 🛡️ 長期 | ⚡ 短期 |
+        |--------|--------|
+        | 看好半年 | 賭這週 |
+        | **2~3x** | **10~20x** |
+        | **9月遠月** | **本週近月** |
+        """)
 
-# 單合約測試
-test_symbol = st.text_input("🔍 手動輸入 TXO 代碼測試", "TXOC260319000")  # 2026/3 示例
-if st.button("測試單一合約"):
-    ticker = yf.Ticker(test_symbol)
-    hist = ticker.history(period="5d")
-    if not hist.empty:
-        st.success(f"✅ `{test_symbol}` 有效！")
-        st.metric("最新權利金", hist['Close'].iloc[-1])
+# ---------------------------------
+# 資料載入
+# ---------------------------------
+@st.cache_data(ttl=300)
+def get_txo_from_taifex(target_date=None):
+    """直接從台灣期交所抓每日選擇權報表"""
+    try:
+        if target_date is None:
+            target_date = date.today().strftime("%Y/%m/%d")
+        url = f"https://www.taifex.com.tw/cht/3/optDailyMarketReport?queryDate={target_date}"
+        tables = pd.read_html(url)
+        df = tables[0]
+        # 清理與命名統一化
+        df = df.rename(columns={
+            '契約': 'contract',
+            '履約價': 'strike_price',
+            '買方成交價': 'close',
+            '買賣權': 'call_put'
+        })
+        df = df[df['contract'].astype(str).str.startswith('TXO', na=False)]
+        df['contract_date'] = df['contract'].str.extract(r'TXO(\d{6})')
+        df['call_put'] = df['call_put'].map({'買權': 'CALL', '賣權': 'PUT'})
+        df = df[['contract_date', 'strike_price', 'close', 'call_put']]
+        df = df.dropna(subset=['close'])
+        df['close'] = pd.to_numeric(df['close'], errors='coerce')
+        return df.dropna()
+    except Exception as e:
+        st.warning(f"載入資料錯誤: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def get_current_twii():
+    """抓台指現價（Yahoo Finance）"""
+    try:
+        tx_data = yf.download('^TWII', period='5d', progress=False)
+        return float(tx_data['Close'].dropna().iloc[-1])
+    except:
+        return 23000.0
+
+with st.spinner("載入報價..."):
+    S_current = get_current_twii()
+    df_latest = get_txo_from_taifex()
+    latest_date = date.today()
+
+col1, col2 = st.columns(2)
+col1.metric("📈 台指", f"{S_current:,.0f}")
+col2.metric("📊 時間", latest_date.strftime('%Y-%m-%d'))
+
+if df_latest.empty:
+    st.error("⚠️ 無法取得資料，可能當日無交易或網站維護中。")
+    st.stop()
+
+# ---------------------------------
+# 操作區
+# ---------------------------------
+st.markdown("---")
+st.markdown("## **🎮 操作超簡單！**")
+
+col1, col2, col3 = st.columns(3)
+
+# 左：策略選擇
+with col1:
+    st.markdown("### **玩法**")
+    if st.button("🛡️ **長期**"):
+        st.session_state.mode = 'long'
+    if st.button("⚡ **短期**"):
+        st.session_state.mode = 'short'
+
+mode = st.session_state.get('mode', 'long')
+
+# 中：月份選擇
+with col2:
+    st.markdown("### **月份**")
+    all_contracts = sorted(df_latest['contract_date'].dropna().unique())
+    sel_contract = st.selectbox("📅 選月份", all_contracts, index=0)
+
+# 右：槓桿滑桿
+with col3:
+    st.markdown("### **槓桿**")
+    if mode == 'long':
+        target_lev = st.slider("穩穩賺", 1.5, 6.0, 2.5, 0.5)
     else:
-        st.error(f"❌ `{test_symbol}` 無資料")
+        target_lev = st.slider("拚大錢", 5.0, 25.0, 12.0, 1.0)
+
+st.info(f"🎯 **目標：{sel_contract} 月，{target_lev} 倍槓桿**")
+
+# ---------------------------------
+# 計算邏輯
+# ---------------------------------
+if st.button("🎯 **找最佳合約！**", use_container_width=True):
+    df_sub = df_latest[df_latest['contract_date'].astype(str) == str(sel_contract)]
+    if df_sub.empty:
+        st.error("找不到該月份資料")
+        st.stop()
+
+    y, m = int(sel_contract[:4]), int(sel_contract[4:6])
+    exp_date = date(y, m, 15)
+    days_left = max((exp_date - date.today()).days, 1)
+    T = days_left / 365.0
+
+    def bs_delta(S, K, T, r, sigma, cp):
+        try:
+            d1 = (np.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma * np.sqrt(T))
+            return norm.cdf(d1) if cp == 'CALL' else -norm.cdf(-d1)
+        except:
+            return 0.5
+
+    rows = []
+    for _, row in df_sub.iterrows():
+        K = float(row['strike_price'])
+        price = float(row['close'])
+        if price <= 0: continue
+        cp = row['call_put']
+        delta = bs_delta(S_current, K, T, 0.02, 0.25, cp)
+        lev = abs(delta * S_current / price)
+        rows.append({
+            '類型': 'CALL 📈' if cp == 'CALL' else 'PUT 📉',
+            '履約價': int(K),
+            '權利金': round(price, 1),
+            '槓桿': round(lev, 2),
+            'Delta': round(abs(delta), 2),
+            '成本': f"${int(price*50):,}",
+            '價內': '✅' if (cp == 'CALL' and K <= S_current) or (cp == 'PUT' and K >= S_current) else '⚠️'
+        })
+
+    df_res = pd.DataFrame(rows)
+    if df_res.empty:
+        st.error("無有效合約")
+        st.stop()
+
+    df_res['差距'] = abs(df_res['槓桿'] - target_lev)
+    df_res = df_res.sort_values('差距')
+    best = df_res.iloc[0]
+
+    st.balloons()
+    st.markdown("## 🎉 **最佳合約！**")
+    st.markdown(f"""
+    <div style='background: linear-gradient(135deg, #d4edda, #c3e6cb); padding: 25px; 
+                border-radius: 15px; border: 3px solid #28a745; text-align: center;'>
+    <h1>🚀 **{best['履約價']:,}**</h1>
+    <h2>⚡ **{best['槓桿']}x** (目標 {target_lev}x)</h2>
+    <p><strong>{best['類型']} | {best['Delta']} Delta | {best['成本']}</strong></p>
+    <h3>📋 下單指令：</h3>
+    <code style='background: white; padding: 12px; border-radius: 8px; font-size: 18px;'>
+    TXO {sel_contract} {best['類型'][:1]}{best['履約價']} 買進 1 口
+    </code>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("## 📋 **完整清單** (按槓桿排序)")
+    st.dataframe(df_res[['類型','履約價','權利金','槓桿','Delta','成本','價內']].head(15),
+                 use_container_width=True)
+
+    st.markdown("## 📊 **槓桿分佈**")
+    fig = px.scatter(df_res, x='履約價', y='槓桿', color='類型', size='Delta',
+                     hover_data=['權利金'], title=f'{sel_contract} 槓桿圖')
+    fig.add_hline(y=target_lev, line_dash="dash", line_color="red",
+                  annotation_text=f"你的目標：{target_lev}x")
+    st.plotly_chart(fig, use_container_width=True)
+
+st.caption("⚠️ 資料來源：台灣期交所每日報表 | 僅供教學示範使用")
