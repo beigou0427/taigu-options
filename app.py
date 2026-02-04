@@ -1,159 +1,237 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
+import numpy as np
 import requests
 import plotly.express as px
 from datetime import datetime
 
-# ----------------------------------------------------
-# 1. 頁面設定
-# ----------------------------------------------------
-st.set_page_config(page_title="台指期權 AI (嚴格真實版)", layout="wide", page_icon="🔥")
+st.set_page_config(page_title="台指期權 AI（真實合約）", layout="wide", page_icon="🔥")
 
 st.markdown("""
-# 🔥 **台指期權 AI (嚴格真實版)**
-**100% 真實數據 | 絕無預測 | 失敗即報錯**
+# 🔥 台指期權 AI（真實合約）
+**全部數字都來自 TAIFEX OpenAPI；抓不到就停止，不猜。**
 """)
 
-# ----------------------------------------------------
-# 2. 核心數據函數 (嚴格模式)
-# ----------------------------------------------------
-@st.cache_data(ttl=10)
-def get_strict_data():
-    # ------------------------------------------------
-    # A. 抓取加權指數 (Yahoo Finance)
-    # ------------------------------------------------
+BASE = "https://openapi.taifex.com.tw/v1"
+
+def _fail(title: str, detail: str, extra: str = ""):
+    st.error(f"❌ {title}\n\n{detail}")
+    if extra:
+        st.code(extra)
+    st.stop()
+
+@st.cache_data(ttl=60)
+def fetch_json_strict(path: str):
+    url = f"{BASE}{path}"
     try:
-        ticker = yf.Ticker("^TWII")
-        # 強制使用 fast_info
-        if hasattr(ticker, 'fast_info') and 'last_price' in ticker.fast_info:
-            twii_price = ticker.fast_info['last_price']
-            if twii_price is None or twii_price <= 0:
-                raise ValueError("Yahoo Finance 回傳無效價格")
-        else:
-            # 備用方案：抓 1 分鐘 K 線，但必須抓到最新資料
-            df = ticker.history(period="1d", interval="1m")
-            if df.empty:
-                raise ValueError("Yahoo Finance 抓無今日 K 線資料")
-            twii_price = df['Close'].iloc[-1]
+        r = requests.get(url, headers={"Accept": "application/json"}, timeout=20)
     except Exception as e:
-        st.error(f"❌ 無法取得加權指數：{e}")
-        st.stop()  # 強制停止，絕不使用預設值
+        _fail("連線失敗", f"{url}\n{repr(e)}")
 
-    # ------------------------------------------------
-    # B. 抓取期交所真實行情 (TAIFEX API)
-    # ------------------------------------------------
+    if r.status_code != 200:
+        _fail("HTTP 非 200", f"{url}\nstatus={r.status_code}", r.text[:1000])
+
+    ctype = (r.headers.get("content-type") or "").lower()
+    if "json" not in ctype:
+        # 常見：回了 text/csv 或 html（WAF / 502 / 轉址），這時 json() 一定會爆
+        _fail("回傳不是 JSON", f"{url}\ncontent-type={ctype}", r.text[:1000])
+
     try:
-        # 使用期交所 OpenAPI (盤後資訊)
-        # 注意：這通常是前一日收盤資料，盤中即時需券商 API
-        url = "https://openapi.taifex.com.tw/v1/DailyMarket/DailyMarketOption"
-        response = requests.get(url, timeout=5)
-        
-        if response.status_code != 200:
-            raise ConnectionError(f"期交所 API 回傳錯誤碼: {response.status_code}")
-            
-        data = response.json()
-        if not data:
-            raise ValueError("期交所 API 回傳空資料")
-            
-        df = pd.DataFrame(data)
-        
-        # 資料清洗與過濾 (只留 TXO)
-        # API 欄位名稱: ContractMonth(合約月份), StrikePrice(履約價), ClosePrice(收盤價), CallPutPair(買賣權), Symbol(代號)
-        # 需確認欄位名稱 (依據官方文件)
-        # 這裡做簡單對應，若欄位不對會直接報錯
-        
-        # 篩選 TXO 台指選
-        # 假設代號包含 'TXO'
-        df = df[df['Symbol'].str.contains('TXO', na=False)].copy()
-        
-        if df.empty:
-            raise ValueError("API 資料中找不到 TXO 合約")
-
-        # 轉換數值格式
-        df['StrikePrice'] = pd.to_numeric(df['StrikePrice'], errors='coerce')
-        df['ClosePrice'] = pd.to_numeric(df['ClosePrice'], errors='coerce')
-        
-        # 移除無效數據
-        df = df.dropna(subset=['StrikePrice', 'ClosePrice'])
-        df = df[df['ClosePrice'] > 0] # 只留有成交價的
-
+        data = r.json()
     except Exception as e:
-        st.error(f"❌ 無法取得期權報價：{e}")
-        st.info("💡 盤中即時資料需要券商 API 權限，目前無法透過公開網頁取得。")
-        st.stop()  # 強制停止
+        _fail("JSON 解析失敗", f"{url}\n{repr(e)}", r.text[:1000])
 
-    return twii_price, df
+    if not data:
+        _fail("JSON 是空的", f"{url}")
+    if not isinstance(data, list):
+        _fail("JSON 不是 list", f"{url}\n實際型別={type(data)}", str(data)[:1000])
+    return data
 
-# ----------------------------------------------------
-# 3. 執行數據獲取
-# ----------------------------------------------------
-# 呼叫嚴格函數
-with st.spinner("正在連線期交所與 Yahoo Finance..."):
-    twii_price, options_df = get_strict_data()
+def pick_col(df: pd.DataFrame, candidates):
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
 
-# ----------------------------------------------------
-# 4. 資料處理與 UI 顯示
-# ----------------------------------------------------
-col1, col2 = st.columns(2)
-col1.metric("📈 加權指數 (真實)", f"{twii_price:,.2f}")
-col2.metric("🟢 資料來源", "TAIFEX 期交所 API")
+def pick_col_contains(df: pd.DataFrame, keyword: str):
+    keyword = keyword.lower()
+    hits = [c for c in df.columns if keyword in str(c).lower()]
+    return hits[0] if hits else None
 
-st.markdown("---")
+def normalize_cp(s: str):
+    t = str(s).strip().upper()
+    if t in ["C", "CALL", "買權"]:
+        return "CALL"
+    if t in ["P", "PUT", "賣權"]:
+        return "PUT"
+    return t
 
-# 整理月份選單
-unique_months = sorted(options_df['ContractMonth'].unique())
-selected_month = st.selectbox("📅 選擇合約月份", unique_months)
+with st.spinner("連線 TAIFEX OpenAPI（期貨/選擇權/Delta）…"):
+    # 期貨每日行情（用 TXF 當作標的價）
+    fut_raw = fetch_json_strict("/DailyMarketReportFut")   # 正確路徑之一 [web:412]
+    # 選擇權每日行情（權利金/成交量/未平倉）
+    opt_raw = fetch_json_strict("/DailyMarketReportOpt")   # 正確路徑之一 [web:412]
+    # 選擇權每日 Delta
+    dlt_raw = fetch_json_strict("/DailyOptionsDelta")      # 正確路徑之一 [web:412]
 
-# 槓桿滑桿
-target_lev = st.slider("⚡ 目標槓桿", 2.0, 20.0, 5.0)
+df_fut = pd.DataFrame(fut_raw)
+df_opt = pd.DataFrame(opt_raw)
+df_dlt = pd.DataFrame(dlt_raw)
 
-# 篩選當月資料
-current_df = options_df[options_df['ContractMonth'] == selected_month].copy()
+# ---- 欄位自動對應（對不上就停）----
+# 共同：商品代號
+col_sym_f = pick_col(df_fut, ["商品代號", "Symbol", "symbol", "InstrumentID", "Contract", "商品"])
+col_sym_o = pick_col(df_opt, ["商品代號", "Symbol", "symbol", "InstrumentID", "Contract", "商品"])
+col_sym_d = pick_col(df_dlt, ["商品代號", "Symbol", "symbol", "InstrumentID", "Contract", "商品"])
 
-# 計算槓桿 (真實公式)
-# Leverage = (Delta * S) / Price
-# 因為沒有即時 Delta，這裡提供「真實價格」與「粗估槓桿」
-# Delta 粗估：價平=0.5, 價內>0.5, 價外<0.5
-# 這裡我們用一個簡單的 Delta 近似公式，但標註為「估計值」
+if not col_sym_f or not col_sym_o or not col_sym_d:
+    _fail("欄位找不到：商品代號", f"fut={col_sym_f}, opt={col_sym_o}, delta={col_sym_d}",
+          f"fut cols={list(df_fut.columns)}\nopt cols={list(df_opt.columns)}\ndelta cols={list(df_dlt.columns)}")
 
-def estimate_delta(S, K, cp):
-    moneyness = S / K
-    if cp == 'Call':
-        if moneyness > 1.05: return 0.9
-        elif moneyness > 1.02: return 0.7
-        elif moneyness > 0.98: return 0.5
-        else: return 0.3
-    else: # Put
-        if moneyness < 0.95: return 0.9
-        elif moneyness < 0.98: return 0.7
-        elif moneyness < 1.02: return 0.5
-        else: return 0.3
+# 選擇權必要欄位：合約月份、履約價、買賣權、收盤價
+col_month_o = pick_col(df_opt, ["到期月份(週別)", "ContractMonth", "contract_date", "到期月份", "Contract_Month"])
+col_strike_o = pick_col(df_opt, ["履約價", "StrikePrice", "strike_price", "Strike_Price"])
+col_cp_o = pick_col(df_opt, ["買賣權", "CallPut", "call_put", "CallPutPair", "CP"])
+col_close_o = pick_col(df_opt, ["收盤價", "ClosePrice", "close", "Close", "最後成交價", "LastPrice"])
+if not all([col_month_o, col_strike_o, col_cp_o, col_close_o]):
+    _fail("欄位找不到：選擇權必要欄位",
+          f"month={col_month_o}, strike={col_strike_o}, cp={col_cp_o}, close={col_close_o}",
+          f"opt cols={list(df_opt.columns)}")
 
-# 增加計算欄位
-current_df['Delta估'] = current_df.apply(lambda row: estimate_delta(twii_price, row['StrikePrice'], row['CallPutPair']), axis=1)
-current_df['槓桿倍數'] = (current_df['Delta估'] * twii_price) / current_df['ClosePrice']
+# Delta 必要欄位：合約月份、履約價、買賣權、Delta
+col_month_d = pick_col(df_dlt, ["到期月份(週別)", "ContractMonth", "contract_date", "到期月份", "Contract_Month"])
+col_strike_d = pick_col(df_dlt, ["履約價", "StrikePrice", "strike_price", "Strike_Price"])
+col_cp_d = pick_col(df_dlt, ["買賣權", "CallPut", "call_put", "CallPutPair", "CP"])
+col_delta = pick_col(df_dlt, ["Delta", "delta"])
+if not col_delta:
+    col_delta = pick_col_contains(df_dlt, "delta")
+if not all([col_month_d, col_strike_d, col_cp_d, col_delta]):
+    _fail("欄位找不到：Delta 必要欄位",
+          f"month={col_month_d}, strike={col_strike_d}, cp={col_cp_d}, delta={col_delta}",
+          f"delta cols={list(df_dlt.columns)}")
 
-# 讓使用者選方向
-type_filter = st.radio("方向", ["Call (看漲)", "Put (看跌)"])
-target_cp = 'Call' if 'Call' in type_filter else 'Put'
+# 期貨：合約月份 + 收盤或結算（用來當標的 S）
+col_month_f = pick_col(df_fut, ["到期月份", "ContractMonth", "contract_date", "到期月份(週別)"])
+col_close_f = pick_col(df_fut, ["收盤價", "ClosePrice", "close", "Close"])
+col_settle_f = pick_col(df_fut, ["結算價", "SettlementPrice", "settlement_price"])
+if not col_month_f:
+    _fail("欄位找不到：期貨合約月份", f"fut month col not found", f"fut cols={list(df_fut.columns)}")
+if not (col_close_f or col_settle_f):
+    _fail("欄位找不到：期貨收盤/結算", f"close={col_close_f}, settle={col_settle_f}", f"fut cols={list(df_fut.columns)}")
 
-# 最終篩選
-final_df = current_df[current_df['CallPutPair'] == target_cp].copy()
-final_df['槓桿差'] = abs(final_df['槓桿倍數'] - target_lev)
-final_df = final_df.sort_values('槓桿差')
+# ---- 資料過濾：只要 TXO / TXF ----
+df_opt = df_opt[df_opt[col_sym_o].astype(str).str.contains("TXO", na=False)].copy()
+df_dlt = df_dlt[df_dlt[col_sym_d].astype(str).str.contains("TXO", na=False)].copy()
+df_fut = df_fut[df_fut[col_sym_f].astype(str).str.contains("TXF", na=False)].copy()
 
-if final_df.empty:
-    st.warning("⚠️ 該條件下無符合合約")
-else:
-    best = final_df.iloc[0]
-    
-    st.markdown(f"""
-    <div style='background: #e3f2fd; padding: 20px; border-radius: 10px; border-left: 5px solid #2196f3;'>
-        <h3>🏆 真實成交最佳推薦：{best['StrikePrice']:.0f} {best['CallPutPair']}</h3>
-        <p>成交價：{best['ClosePrice']} | 槓桿(估)：{best['槓桿倍數']:.1f}x</p>
-        <p>資料時間：{datetime.now().strftime('%H:%M')}</p>
-    </div>
-    """, unsafe_allow_html=True)
+if df_opt.empty or df_dlt.empty or df_fut.empty:
+    _fail("過濾 TXO/TXF 後是空的",
+          f"opt_rows={len(df_opt)}, delta_rows={len(df_dlt)}, fut_rows={len(df_fut)}",
+          "請檢查 Symbol/商品代號欄位內容是否真的含 TXO / TXF")
 
-    st.dataframe(final_df[['ContractMonth', 'StrikePrice', 'CallPutPair', 'ClosePrice', '槓桿倍數']].head(10))
+# ---- 型別整理 ----
+df_opt[col_strike_o] = pd.to_numeric(df_opt[col_strike_o], errors="coerce")
+df_opt[col_close_o] = pd.to_numeric(df_opt[col_close_o], errors="coerce")
+df_opt[col_cp_o] = df_opt[col_cp_o].apply(normalize_cp)
+
+df_dlt[col_strike_d] = pd.to_numeric(df_dlt[col_strike_d], errors="coerce")
+df_dlt[col_delta] = pd.to_numeric(df_dlt[col_delta], errors="coerce")
+df_dlt[col_cp_d] = df_dlt[col_cp_d].apply(normalize_cp)
+
+price_col_f = col_close_f if col_close_f else col_settle_f
+df_fut[price_col_f] = pd.to_numeric(df_fut[price_col_f], errors="coerce")
+
+df_opt = df_opt.dropna(subset=[col_strike_o, col_close_o])
+df_opt = df_opt[df_opt[col_close_o] > 0].copy()
+
+df_dlt = df_dlt.dropna(subset=[col_strike_d, col_delta])
+df_fut = df_fut.dropna(subset=[col_month_f, price_col_f]).copy()
+
+# ---- 合約月份選單：完全由真實資料決定（不會出現不存在的月份）----
+months = sorted(set(df_opt[col_month_o].astype(str).unique()) & set(df_dlt[col_month_d].astype(str).unique()))
+if not months:
+    _fail("找不到可用月份（opt 與 delta 無交集）",
+          f"opt months={sorted(df_opt[col_month_o].astype(str).unique())}\ndelta months={sorted(df_dlt[col_month_d].astype(str).unique())}")
+
+# ---- UI ----
+colA, colB, colC = st.columns(3)
+
+with colA:
+    sel_month = st.selectbox("📅 真實合約月份", months)
+
+with colB:
+    direction = st.radio("方向", ["CALL", "PUT"], horizontal=True)
+
+with colC:
+    target_lev = st.slider("目標槓桿（用 Delta 計算）", 1.5, 25.0, 5.0, 0.5)
+
+# 標的價：用同月份 TXF 的收盤/結算；找不到就停（不猜）
+df_fut_m = df_fut[df_fut[col_month_f].astype(str) == str(sel_month)].copy()
+if df_fut_m.empty:
+    _fail("找不到對應月份的 TXF", f"選擇的月份={sel_month}\nTXF 可用月份={sorted(df_fut[col_month_f].astype(str).unique())}")
+
+S = float(df_fut_m[price_col_f].dropna().iloc[0])
+
+st.metric("TXF（真實）收盤/結算", f"{S:,.0f}", f"來源欄位：{price_col_f}")
+
+# 合併 opt + delta（同月份、同履約價、同 CP）
+opt_m = df_opt[df_opt[col_month_o].astype(str) == str(sel_month)].copy()
+dlt_m = df_dlt[df_dlt[col_month_d].astype(str) == str(sel_month)].copy()
+
+opt_m = opt_m[opt_m[col_cp_o] == direction].copy()
+dlt_m = dlt_m[dlt_m[col_cp_d] == direction].copy()
+
+merged = opt_m.merge(
+    dlt_m,
+    left_on=[col_strike_o, col_cp_o],
+    right_on=[col_strike_d, col_cp_d],
+    how="inner",
+    suffixes=("_opt", "_dlt"),
+)
+
+if merged.empty:
+    _fail("合併 opt + delta 後為空",
+          f"month={sel_month}, direction={direction}\n"
+          f"opt rows={len(opt_m)}, delta rows={len(dlt_m)}\n"
+          f"join keys: opt({col_strike_o},{col_cp_o}) delta({col_strike_d},{col_cp_d})")
+
+# 計算槓桿：Leverage = |Delta| * S / 權利金（權利金用真實收盤價）
+merged["權利金"] = pd.to_numeric(merged[col_close_o], errors="coerce")
+merged["Delta"] = pd.to_numeric(merged[col_delta], errors="coerce")
+merged = merged.dropna(subset=["權利金", "Delta"])
+merged = merged[merged["權利金"] > 0].copy()
+merged["槓桿"] = (merged["Delta"].abs() * S) / merged["權利金"]
+merged["成本(約)"] = (merged["權利金"] * 50).round(0).astype(int)
+
+merged["差距"] = (merged["槓桿"] - float(target_lev)).abs()
+merged = merged.sort_values("差距", ascending=True)
+
+best = merged.iloc[0]
+
+st.markdown("## 🎯 真實合約推薦")
+st.markdown(
+    f"- 月份：{sel_month}\n"
+    f"- 類型：{direction}\n"
+    f"- 履約價：{int(best[col_strike_o])}\n"
+    f"- 權利金（收盤）：{best['權利金']}\n"
+    f"- Delta（TAIFEX）：{best['Delta']}\n"
+    f"- 槓桿：{best['槓桿']:.2f}x\n"
+    f"- 成本（約）：${best['成本(約)']:,}"
+)
+
+st.markdown("## 📋 真實合約清單（Top 50）")
+show_cols = {
+    "履約價": col_strike_o,
+    "權利金(收盤)": "權利金",
+    "Delta": "Delta",
+    "槓桿": "槓桿",
+    "成本(約)": "成本(約)",
+}
+show_df = merged[list(show_cols.values())].rename(columns={v: k for k, v in show_cols.items()}).head(50)
+st.dataframe(show_df, use_container_width=True)
+
+fig = px.scatter(show_df, x="履約價", y="槓桿", size="權利金(收盤)", title="履約價 vs 槓桿（真實收盤 + 真實 Delta）")
+fig.add_hline(y=float(target_lev), line_dash="dash")
+st.plotly_chart(fig, use_container_width=True)
+
+st.caption("註：以上為 TAIFEX OpenAPI 每日行情/每日 Delta（盤後資料）。")
