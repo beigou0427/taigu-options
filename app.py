@@ -5,7 +5,7 @@
 - CALL / PUT 分開篩選
 - 全 FinMind + Black-Scholes + 勝率系統
 - 預設開啟「穩健模式」(剔除深價外)
-- UI 全面升級：專業簡潔配色 (修復 HTML 渲染問題)
+- UI 全面升級：專業簡潔配色 (完美修復 HTML 渲染)
 """
 
 import streamlit as st
@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from FinMind.data import DataLoader
 import numpy as np
 from scipy.stats import norm
+import textwrap  # <--- 新增這行
 
 # =========================
 # 新 TOKEN (已更新 2026-02-05)
@@ -241,39 +242,39 @@ if st.button("🎯 **全開計算！**", type="primary", use_container_width=Tru
         accent_color = "#c62828"  # 深紅
         light_color = "#ffebee"   # 淺紅背景
 
-    # 最佳推薦卡片 (HTML 無縮排修正版)
-    card_html = f"""
-<div style='background-color: white; border-left: 6px solid {accent_color}; padding: 24px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 20px;'>
-    <h3 style='margin: 0; color: #555; font-size: 1.1em;'>🚀 最佳推薦合約</h3>
-    <div style='display: flex; align-items: baseline; gap: 12px; margin: 8px 0;'>
-        <h1 style='margin: 0; color: {accent_color}; font-size: 2.8em;'>{int(best["履約價"])}</h1>
-        <span style='background: {light_color}; color: {accent_color}; padding: 4px 8px; border-radius: 4px; font-weight: bold;'>{best["狀態"]}</span>
-    </div>
-    
-    <div style='display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-top: 20px;'>
-        <div>
-            <div style='color: #888; font-size: 0.9em;'>槓桿倍數</div>
-            <div style='font-size: 1.4em; font-weight: bold; color: #333;'>{best["槓桿"]}x</div>
+    # 最佳推薦卡片 (使用 textwrap.dedent 修復縮排問題)
+    card_html = textwrap.dedent(f"""
+        <div style='background-color: white; border-left: 6px solid {accent_color}; padding: 24px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 20px;'>
+            <h3 style='margin: 0; color: #555; font-size: 1.1em;'>🚀 最佳推薦合約</h3>
+            <div style='display: flex; align-items: baseline; gap: 12px; margin: 8px 0;'>
+                <h1 style='margin: 0; color: {accent_color}; font-size: 2.8em;'>{int(best["履約價"])}</h1>
+                <span style='background: {light_color}; color: {accent_color}; padding: 4px 8px; border-radius: 4px; font-weight: bold;'>{best["狀態"]}</span>
+            </div>
+            
+            <div style='display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-top: 20px;'>
+                <div>
+                    <div style='color: #888; font-size: 0.9em;'>槓桿倍數</div>
+                    <div style='font-size: 1.4em; font-weight: bold; color: #333;'>{best["槓桿"]}x</div>
+                </div>
+                <div>
+                    <div style='color: #888; font-size: 0.9em;'>勝率估算</div>
+                    <div style='font-size: 1.4em; font-weight: bold; color: {accent_color};'>{best["勝率"]}%</div>
+                </div>
+                <div>
+                    <div style='color: #888; font-size: 0.9em;'>Delta</div>
+                    <div style='font-size: 1.4em; font-weight: bold; color: #333;'>{best["Delta"]}</div>
+                </div>
+                <div>
+                    <div style='color: #888; font-size: 0.9em;'>參考價</div>
+                    <div style='font-size: 1.4em; font-weight: bold; color: #333;'>{best["參考價"]}</div>
+                </div>
+            </div>
+            
+            <div style='margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee; color: #666; font-size: 0.9em;'>
+                {best["位置"]} | 成交量：{int(best["成交量"]):,}
+            </div>
         </div>
-        <div>
-            <div style='color: #888; font-size: 0.9em;'>勝率估算</div>
-            <div style='font-size: 1.4em; font-weight: bold; color: {accent_color};'>{best["勝率"]}%</div>
-        </div>
-        <div>
-            <div style='color: #888; font-size: 0.9em;'>Delta</div>
-            <div style='font-size: 1.4em; font-weight: bold; color: #333;'>{best["Delta"]}</div>
-        </div>
-        <div>
-            <div style='color: #888; font-size: 0.9em;'>參考價</div>
-            <div style='font-size: 1.4em; font-weight: bold; color: #333;'>{best["參考價"]}</div>
-        </div>
-    </div>
-    
-    <div style='margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee; color: #666; font-size: 0.9em;'>
-        {best["位置"]} | 成交量：{int(best["成交量"]):,}
-    </div>
-</div>
-"""
+    """)
     st.markdown(card_html, unsafe_allow_html=True)
 
     st.markdown("### 📋 完整清單")
