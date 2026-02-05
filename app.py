@@ -3,8 +3,8 @@
 - 新手教學（超詳細版）
 - 數字全開 + 理論價模擬
 - CALL / PUT 分開篩選
-- 全 FinMind + Black-Scholes
-- 新增：🔥 勝率估算系統
+- 全 FinMind + Black-Scholes + 勝率系統
+- 預設開啟「穩健模式」(剔除深價外)
 """
 
 import streamlit as st
@@ -110,7 +110,8 @@ if df_latest.empty: st.stop()
 # 操作區
 # ---------------------------------
 st.markdown("---")
-c1, c2, c3 = st.columns(3)
+# 改成 4 個欄位
+c1, c2, c3, c4 = st.columns(4)
 
 with c1:
     st.markdown("### 1️⃣ 方向")
@@ -127,6 +128,11 @@ with c2:
 with c3:
     st.markdown("### 3️⃣ 風險 (槓桿)")
     target_lev = st.slider("想要放大幾倍？", 1.5, 20.0, 5.0, 0.5)
+
+with c4:
+    st.markdown("### 4️⃣ 篩選")
+    # 預設開啟穩健模式 (剔除深價外)
+    safe_mode = st.checkbox("🔰 穩健模式 (剔除深價外)", value=True, help="過濾掉勝率極低、槓桿過高的價外合約，適合新手")
 
 st.info(f"🎯 **目標：{sel_contract} 月，{target_lev} 倍槓桿，含勝率分析！**")
 
@@ -149,48 +155,20 @@ def bs_price_delta(S, K, T, r, sigma, cp):
         return 0.0, 0.5
 
 def calculate_win_rate(delta, days, hist_win=0.80, premium_ratio=0.85, margin_call=0.02, cost=0.015):
-    """
-    獨家勝率估算模型
-    delta: 合約Delta (0~1)
-    days: 剩餘天數
-    """
+    """獨家勝率估算模型"""
     if days <= 0: return 0.0
-    
-    # 修正：Delta 對買方來說，越價內(Delta大)勝率越高；賣方相反。這裡假設是買方策略。
-    # 價外 Delta 小 -> 勝率低；價內 Delta 大 -> 勝率高
-    
     T = days / 365.0
-    sigma = 0.20  # 台指波動率預設 20%
-    mu = 0.05     # 預期年化報酬 5%
     
-    # 蒙地卡羅模擬 (簡化版：直接用公式估算 OTM 機率的補數)
-    # 這裡保留原函式的邏輯架構，但改用機率分布計算以提升效能
+    # Delta 代表大概率 (粗略估計)
+    p_itm = delta  # 價內機率近似於 Delta
     
-    # P(ITM) 近似於 N(d2)
-    # 這裡我們用您提供的邏輯框架進行運算
+    # 結合歷史勝率因子調整
+    # 對買方而言，Delta 越高 (越價內)，勝率越高
+    raw_win = (p_itm * 0.7 + hist_win * 0.3) 
     
-    # 模擬路徑數 (為了效能，我們用統計學近似，不跑 loop)
-    # p_otm 原意是「最後歸零的機率」。對於買方，就是 1 - P(ITM)
-    # 簡單用 Delta 反推勝率基礎：Delta 越大，最終獲利機率越高
+    # 扣除滑價與交易成本影響
+    adj_win = raw_win * (1 - margin_call) * (1 - cost) * 100
     
-    # 依照您的公式邏輯重建：
-    # p_otm (歸零機率) 約等於 1 - Delta (粗略)
-    p_otm = 1.0 - delta 
-    
-    p_premium = p_otm * premium_ratio
-    
-    # 原公式：base = (1 - delta + p_otm + hist_win + p_premium) / 4
-    # 注意：若 delta 是買方勝率因子，那公式裡的 (1-delta) 其實是失敗因子？
-    # 假設您的公式是設計給「賣方」或特定策略，這裡我稍微調整成「買方直觀勝率」
-    # 買方勝率 = (Delta權重 + 歷史權重) 調整風險
-    
-    # 調整為買方視角：Delta 越高，勝率越高
-    base_win = (delta * 1.5 + hist_win * 0.5) / 2  # 權重分配
-    
-    # 扣除成本與風險
-    adj_win = base_win * (1 - margin_call) * (1 - cost) * 100
-    
-    # 上限 99，下限 1
     return min(max(adj_win, 1.0), 99.0)
 
 if st.button("🎯 **全開計算！**", type="primary", use_container_width=True):
@@ -225,6 +203,13 @@ if st.button("🎯 **全開計算！**", type="primary", use_container_width=Tru
             bs_price, delta = bs_price_delta(S_current, K, T, 0.02, iv_val, target_cp)
             delta_abs = abs(delta)
 
+            # --- 穩健模式篩選 ---
+            if safe_mode:
+                # 剔除深價外 (Delta < 0.15) 或是 極度深價外
+                # Delta < 0.15 通常勝率極低，屬於賭博性質
+                if delta_abs < 0.15: continue
+            # --------------------
+
             # 價格處理
             if volume > 0 and price > 0:
                 calc_price = price
@@ -237,8 +222,7 @@ if st.button("🎯 **全開計算！**", type="primary", use_container_width=Tru
             
             leverage = (delta_abs * S_current) / calc_price
             
-            # 計算勝率 (使用您的模型邏輯)
-            # 這裡傳入 delta_abs (0~1)，價內越高
+            # 計算勝率
             win_rate = calculate_win_rate(delta_abs, days_left)
             
             is_itm = (target_cp == "CALL" and K <= S_current) or (target_cp == "PUT" and K >= S_current)
@@ -251,7 +235,7 @@ if st.button("🎯 **全開計算！**", type="primary", use_container_width=Tru
                 "槓桿": round(leverage, 2),
                 "成交量": volume,
                 "Delta": round(delta_abs, 2),
-                "勝率": round(win_rate, 1),  # 新增欄位
+                "勝率": round(win_rate, 1),
                 "位置": itm_str,
                 "差距": abs(leverage - target_lev)
             })
@@ -259,7 +243,8 @@ if st.button("🎯 **全開計算！**", type="primary", use_container_width=Tru
 
     df_res = pd.DataFrame(results)
     if df_res.empty:
-        st.error("無資料")
+        msg = "無符合條件的合約" + (" (嘗試關閉穩健模式)" if safe_mode else "")
+        st.warning(msg)
         st.stop()
 
     df_res = df_res.sort_values("差距").reset_index(drop=True)
@@ -270,20 +255,18 @@ if st.button("🎯 **全開計算！**", type="primary", use_container_width=Tru
     bg_color = "#d4edda" if target_cp == "CALL" else "#f8d7da"
     border_color = "#28a745" if target_cp == "CALL" else "#dc3545"
 
-    # 顯示最佳合約
     st.markdown(f"""
     <div style='background:{bg_color};padding:20px;border-radius:10px;text-align:center;border:2px solid {border_color}'>
     <h2>🚀 最佳推薦：{best['履約價']} ({best['狀態']})</h2>
-    <h3>⚡ 槓桿：{best['槓桿']}x (目標 {target_lev}x)</h3>
+    <h3>⚡ 槓桿：{best['槓桿']}x (目標 {target_lev}x) | Δ {best['Delta']}</h3>
     <h3 style='color:#d63384'>🔥 勝率估算：{best['勝率']}%</h3>
-    <p><strong>{best['位置']} | 參考價：{best['參考價']} | Delta：{best['Delta']}</strong></p>
+    <p><strong>{best['位置']} | 參考價：{best['參考價']}</strong></p>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("### 📋 完整清單 (含勝率)")
+    st.markdown("### 📋 完整清單 (含 Delta 與 勝率)")
     
-    # 格式化顯示
-    show_df = df_res[["狀態","履約價","參考價","槓桿","勝率","成交量","位置"]].head(20).copy()
+    show_df = df_res[["狀態","履約價","參考價","槓桿","勝率","Delta","位置","成交量"]].head(20).copy()
     show_df["勝率"] = show_df["勝率"].map(lambda x: f"{x}%")
     
     st.dataframe(show_df, use_container_width=True)
