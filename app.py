@@ -1,7 +1,7 @@
 """
 🔰 台指期權終極新手機：合約月份自由選！
-- 新手教學 + 槓桿真篩選 + 月份自由選
-- 完全無錯版
+- 新手教學 + 槓桿真篩選 + 月份自由選 + 只顯示真成交
+- 完全無錯版 + Cloud 部署版
 """
 
 import streamlit as st
@@ -13,11 +13,9 @@ import plotly.express as px
 import numpy as np
 from scipy.stats import norm
 
-TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMi0wNCAwMTowNDowMyIsInVzZXJfaWQiOiJiYWdlbDA0MjciLCJlbWFpbCI6ImFzZDc4MzM1MjBAeWFob28uY29tLnR3IiwiaXAiOiIxLjE3Mi4xMDguNjkifQ.svsiG2FxPiuQPTsYgODId5uKXJ8imkWGORIgLKeFBpU"
-
 st.set_page_config(page_title="台指期權新手器", layout="wide", page_icon="🔥")
 
-st.markdown("# 🔥 **台指期權新手器**\n**月份隨便選！槓桿真篩選！**")
+st.markdown("# 🔥 **台指期權新手器**\\n**月份隨便選！槓桿真篩選！只秀真成交！**")
 
 # ---------------------------------
 # 新手教學
@@ -52,6 +50,11 @@ def get_data():
         tx_data = yf.download('^TWII', period='5d', progress=False)
         S_current = float(tx_data['Close'].dropna().iloc[-1])
         
+        TOKEN = st.secrets.get("finmind_token", "")
+        if not TOKEN:
+            st.error("請在 Cloud Secrets 設定 finmind_token")
+            st.stop()
+            
         dl = DataLoader()
         dl.login_by_token(api_token=TOKEN)
         end_date = date.today().strftime('%Y-%m-%d')
@@ -63,7 +66,9 @@ def get_data():
         df_latest = df[df['date'] == latest_date]
         
         return S_current, df_latest, latest_date
-    except:
+    except Exception as e:
+        st.error(f"資料載入失敗：{e}")
+        st.stop()
         return 23000, pd.DataFrame(), pd.Timestamp.now()
 
 with st.spinner("載入報價..."):
@@ -111,7 +116,7 @@ with col3:
     else:
         target_lev = st.slider("拚大錢", 5.0, 25.0, 12.0, 1.0)
 
-st.info(f"🎯 **目標：{sel_contract} 月，{target_lev} 倍槓桿**")
+st.info(f"🎯 **目標：{sel_contract} 月，{target_lev} 倍槓桿，只秀真成交！**")
 
 # ---------------------------------
 # 計算按鈕
@@ -148,9 +153,13 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
     for _, row in target_df.iterrows():
         K = float(row['strike_price'])
         price = float(row['close'])
-        cp = row['call_put']
+        volume = int(row['volume'])  # 只取真成交！
         
-        if price < 1: continue
+        # 只顯示有真成交的合約！
+        if price < 1 or volume == 0:
+            continue
+            
+        cp = row['call_put']
         
         delta = bs_delta(S_current, K, T, 0.02, 0.25, cp)
         delta_abs = abs(delta)
@@ -160,6 +169,7 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
             '類型': 'CALL 📈' if cp == 'CALL' else 'PUT 📉',
             '履約價': int(K),
             '權利金': round(price, 1),
+            '成交量': f"{volume:,}",
             '槓桿': round(leverage, 2),
             'Delta': round(delta_abs, 2),
             '成本': f"${int(price*50):,}",
@@ -168,7 +178,7 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
     
     df_res = pd.DataFrame(results)
     if df_res.empty:
-        st.error("無有效合約")
+        st.warning("⚠️ 該月份無真成交合約，請試其他月份")
         st.stop()
     
     # 按槓桿差距排序
@@ -179,13 +189,13 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
     
     # 最佳推薦
     st.balloons()
-    st.markdown("## 🎉 **最佳合約！**")
+    st.markdown("## 🎉 **最佳真成交合約！**")
     st.markdown(f"""
     <div style='background: linear-gradient(135deg, #d4edda, #c3e6cb); padding: 25px; 
                 border-radius: 15px; border: 3px solid #28a745; text-align: center;'>
     <h1>🚀 **{best['履約價']:,}**</h1>
     <h2>⚡ **{best['槓桿']}x** (目標 {target_lev}x)</h2>
-    <p><strong>{best['類型']} | {best['Delta']} Delta | {best['成本']}</strong></p>
+    <p><strong>{best['類型']} | {best['Delta']} Δ | {best['成交量']} 張 | {best['成本']}</strong></p>
     <h3>📋 下單指令：</h3>
     <code style='background: white; padding: 12px; border-radius: 8px; font-size: 18px;'>
     TXO {sel_contract} {best['類型'][:1]}{best['履約價']} 買進 1 口
@@ -194,17 +204,17 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
     """, unsafe_allow_html=True)
     
     # 表格
-    st.markdown("## 📋 **完整清單** (按槓桿排序)")
-    display_df = df_res[['類型','履約價','權利金','槓桿','Delta','成本','價內']].head(15)
+    st.markdown("## 📋 **真成交清單** (按槓桿排序)")
+    display_df = df_res[['類型','履約價','權利金','成交量','槓桿','Delta','成本','價內']].head(15)
     display_df['槓桿差距'] = df_res['差距'].head(15).round(2)
     st.dataframe(display_df, use_container_width=True)
     
     # 圖表
-    st.markdown("## 📊 **槓桿分佈**")
-    fig = px.scatter(df_res, x='履約價', y='槓桿', color='類型', size='Delta',
-                     hover_data=['權利金'], title=f'{sel_contract} 槓桿圖')
+    st.markdown("## 📊 **真成交槓桿分佈**")
+    fig = px.scatter(df_res, x='履約價', y='槓桿', color='類型', size='成交量',
+                     hover_data=['權利金', '成交量'], title=f'{sel_contract} 真成交槓桿圖')
     fig.add_hline(y=target_lev, line_dash="dash", line_color="red", 
                   annotation_text=f"你的目標：{target_lev}x")
     st.plotly_chart(fig, use_container_width=True)
 
-st.caption("⚠️ 期權有歸零風險，僅供學習")
+st.caption("⚠️ 期權有歸零風險，僅供學習 | 貝伊果屋出品")
