@@ -5,7 +5,7 @@
 - CALL / PUT 分開篩選
 - 全 FinMind + Black-Scholes + 勝率系統
 - 預設開啟「穩健模式」(剔除深價外)
-- UI 穩定版：改用 Streamlit 原生組件 (保證不破圖)
+- UI 穩定版 + 10 大新手友善建議模組 (風險紅綠燈、資金建議、情境模擬...)
 """
 
 import streamlit as st
@@ -255,6 +255,77 @@ if st.button("🎯 **全開計算！**", type="primary", use_container_width=Tru
     col3.metric("📊 Delta", f"{best['Delta']}")
     col4.metric("💰 參考價", f"{best['參考價']}")
     
+    # ---------------------------
+    # 🔥 10大新手導師建議區塊 (新增整合版)
+    # ---------------------------
+    st.markdown("---")
+    st.markdown("### 💡 **新手導師 10 大建議**")
+    
+    # 1. 風險紅綠燈
+    lev = best['槓桿']
+    if lev < 6:
+        st.success("1️⃣ 🟢 **風險等級：安全** (槓桿 <6x，像股票一樣安心)")
+    elif lev < 12:
+        st.warning("1️⃣ 🟡 **風險等級：警戒** (槓桿 6~12x，需密切關注盤勢)")
+    else:
+        st.error("1️⃣ 🔴 **風險等級：危險** (槓桿 >12x，高風險賭博性質)")
+
+    # 2. 情境模擬
+    delta = best['Delta']
+    profit_100 = int(delta * 100 * 50)
+    profit_3pct = int(delta * (S_current * 0.03) * 50)
+    
+    if target_cp == "CALL":
+        st.info(f"2️⃣ 🎬 **情境模擬**：\n- 台指漲 **100點**，這張單約賺 **${profit_100:,}**\n- 台指漲 **3%** (大行情)，約賺 **${profit_3pct:,}**")
+    else:
+        st.info(f"2️⃣ 🎬 **情境模擬**：\n- 台指跌 **100點**，這張單約賺 **${profit_100:,}**\n- 台指跌 **3%** (大崩盤)，約賺 **${profit_3pct:,}**")
+
+    # 3. 資金控管
+    contract_cost = best['參考價'] * 50
+    safe_fund = contract_cost * 20
+    st.caption(f"3️⃣ 💰 **資金控管**：買 1 口成本 **${int(contract_cost):,}**。建議準備 **${int(safe_fund):,}** 本金再操作，避免一次畢業！")
+
+    # 4. 勝率解析
+    wr = best['勝率']
+    if wr > 80:
+        st.success(f"4️⃣ 🏆 **勝率等級：超穩健 ({wr}%)** - 幾乎跟買公債一樣穩")
+    elif wr > 60:
+        st.info(f"4️⃣ ✅ **勝率等級：穩健 ({wr}%)** - 像買績優股")
+    else:
+        st.warning(f"4️⃣ ⚠️ **勝率等級：積極 ({wr}%)** - 像買期貨或小型股")
+
+    # 5. Delta 性格
+    if delta > 0.8:
+        st.markdown("5️⃣ 🧠 **合約性格：老實人** (跟漲跟跌都很乖，不會亂跳)")
+    elif delta > 0.5:
+        st.markdown("5️⃣ 🧠 **合約性格：穩重派** (漲跌都有感覺，反應適中)")
+    else:
+        st.markdown("5️⃣ 🚀 **合約性格：冒險家** (只有大行情才會動，平常像死魚)")
+
+    # 6. 倉位建議
+    st.markdown("6️⃣ ⚖️ **倉位建議**：新手建議 **只買 1 口** 試水溫，切勿梭哈。")
+    
+    # 7. 停損指南
+    st.markdown("7️⃣ 🛑 **停損指南**：權利金跌 **30%** 請立即離場，留得青山在。")
+    
+    # 8. 適合人群
+    if lev < 6 and wr > 70:
+        st.markdown("8️⃣ 👥 **適合人群**：上班族、保守投資人、存股族。")
+    else:
+        st.markdown("8️⃣ 👥 **適合人群**：全職交易者、短線客、風險愛好者。")
+        
+    # 9. 週期建議
+    if days_left > 30:
+        st.markdown("9️⃣ ⏰ **週期建議**：還有很久到期，可以 **波段持有**。")
+    elif days_left > 7:
+        st.markdown("9️⃣ ⏰ **週期建議**：適合 **短線操作** (1-3天)。")
+    else:
+        st.markdown("9️⃣ ⏰ **週期建議**：快到期了！建議 **當沖或隔日沖**，不要久抱。")
+        
+    # 10. 成本效益 (ROI)
+    roi = round(lev * (wr/100), 2)
+    st.markdown(f"🔟 💹 **CP值 (ROI)**：預期效益指標 **{roi}** (數值越高越好)")
+
     st.divider()
 
     st.markdown("### 📋 完整清單")
