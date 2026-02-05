@@ -15,10 +15,9 @@ import numpy as np
 from scipy.stats import norm
 
 # =========================
-# 你只要改這裡：FinMind TOKEN
+# 新 TOKEN (已更新 2026-02-05)
 # =========================
-FINMIND_TOKEN = "請貼上你的新TOKEN"
-
+FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMi0wNSAxODo1ODo1MiIsInVzZXJfaWQiOiJiYWdlbDA0MjciLCJpcCI6IjEuMTcyLjEwOC42OSIsImV4cCI6MTc3MDg5MzkzMn0.cojhPC-1LBEFWqG-eakETyteDdeHt5Cqx-hJ9OIK9k0"
 
 st.set_page_config(page_title="台指期權新手器", layout="wide", page_icon="🔥")
 st.markdown("# 🔥 **台指期權新手器**\n**月份隨便選！槓桿真篩選！只秀真成交！**")
@@ -56,12 +55,20 @@ with st.expander("📚 **新手必看教學**", expanded=True):
 # ---------------------------------
 @st.cache_data(ttl=300)
 def get_data(token: str):
-    if not token or "請貼上" in token:
-        raise ValueError("FINMIND_TOKEN 尚未設定或未更新")
+    if not token:
+        raise ValueError("FINMIND_TOKEN 尚未設定")
 
-    tx_data = yf.download("^TWII", period="5d", progress=False)
-    S_current = float(tx_data["Close"].dropna().iloc[-1])
+    # 1. 台指報價
+    try:
+        tx_data = yf.download("^TWII", period="5d", progress=False)
+        if tx_data.empty:
+            S_current = 23000.0  # fallback
+        else:
+            S_current = float(tx_data["Close"].dropna().iloc[-1])
+    except:
+        S_current = 23000.0
 
+    # 2. 期權資料
     dl = DataLoader()
     dl.login_by_token(api_token=token)
 
@@ -69,6 +76,9 @@ def get_data(token: str):
     start_date = (date.today() - timedelta(days=60)).strftime("%Y-%m-%d")
 
     df = dl.taiwan_option_daily("TXO", start_date=start_date, end_date=end_date)
+    if df.empty:
+        return S_current, pd.DataFrame(), pd.Timestamp.now()
+        
     df["date"] = pd.to_datetime(df["date"])
     latest_date = df["date"].max()
     df_latest = df[df["date"] == latest_date].copy()
@@ -81,7 +91,6 @@ with st.spinner("載入報價..."):
         S_current, df_latest, latest_date = get_data(FINMIND_TOKEN)
     except Exception as e:
         st.error(f"資料載入失敗：{e}")
-        st.info("請確認 FINMIND_TOKEN 已貼上『新 token』，且 requirements.txt 有安裝 FinMind。")
         st.stop()
 
 m1, m2 = st.columns(2)
@@ -89,7 +98,7 @@ m1.metric("📈 台指", f"{S_current:,.0f}")
 m2.metric("📊 時間", latest_date.strftime("%Y-%m-%d"))
 
 if df_latest.empty:
-    st.error("無資料")
+    st.error("目前無資料（可能是剛開盤或 TOKEN 問題）")
     st.stop()
 
 # ---------------------------------
@@ -112,12 +121,11 @@ with c1:
 with c2:
     st.markdown("### **月份**")
     all_contracts = sorted(df_latest["contract_date"].astype(str).unique())
-    # 只留當月(含)以後
     ym_now = int(latest_date.strftime("%Y%m"))
     future_contracts = [c for c in all_contracts if c.isdigit() and int(c) >= ym_now]
 
     if not future_contracts:
-        st.error("找不到可用月份（contract_date）。")
+        st.error("找不到可用月份")
         st.stop()
 
     default_index = len(future_contracts) - 3 if len(future_contracts) > 3 else 0
@@ -134,16 +142,18 @@ with c3:
 st.info(f"🎯 **目標：{sel_contract} 月，{target_lev} 倍槓桿，只秀真成交！**")
 
 # ---------------------------------
-# 計算（無圖表版）
+# 計算
 # ---------------------------------
 def bs_delta(S, K, T, r, sigma, cp):
     if T <= 0 or sigma <= 0:
         return 0.5
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    if cp == "CALL":
-        return float(norm.cdf(d1))
-    return float(-norm.cdf(-d1))
-
+    try:
+        d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+        if cp == "CALL":
+            return float(norm.cdf(d1))
+        return float(-norm.cdf(-d1))
+    except:
+        return 0.5
 
 if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=True):
     target_df = df_latest[df_latest["contract_date"].astype(str) == str(sel_contract)].copy()
@@ -152,12 +162,11 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
         st.error(f"{sel_contract} 無資料")
         st.stop()
 
-    # 到期時間（簡化：取當月 15 號）
     try:
         y, m = int(sel_contract[:4]), int(sel_contract[4:6])
         exp_date = date(y, m, 15)
         days_left = max((exp_date - date.today()).days, 1)
-    except Exception:
+    except:
         days_left = 30
 
     T = days_left / 365.0
@@ -169,28 +178,25 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
             price = float(row["close"])
             volume = int(row["volume"])
             cp = str(row["call_put"]).upper()
-        except Exception:
+        except:
             continue
 
         # 只顯示真成交
         if volume <= 0:
             continue
-
-        # 避免超低價造成槓桿爆炸
         if price < 1:
             continue
 
         delta = bs_delta(S_current, K, T, 0.02, 0.25, cp)
         delta_abs = abs(delta)
         leverage = (delta_abs * S_current) / price
-
         is_itm = (cp == "CALL" and K <= S_current) or (cp == "PUT" and K >= S_current)
 
         results.append({
             "類型": "CALL 📈" if cp == "CALL" else "PUT 📉",
             "履約價": int(K),
             "權利金": round(price, 1),
-            "成交量": volume,  # 保持為數字，避免後續運算出錯
+            "成交量": volume,
             "槓桿": round(leverage, 2),
             "Delta": round(delta_abs, 2),
             "成本": int(price * 50),
@@ -201,9 +207,10 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
     df_res = pd.DataFrame(results)
 
     if df_res.empty:
-        st.warning("⚠️ 該月份無真成交合約（volume > 0），請試其他月份")
+        st.warning("⚠️ 該月份無真成交合約，請試其他月份")
         st.stop()
 
+    # 排序：先找最接近目標槓桿的
     df_res["差距"] = (df_res["槓桿"] - float(target_lev)).abs()
     df_res = df_res.sort_values(["差距", "成交量"], ascending=[True, False]).reset_index(drop=True)
 
@@ -227,10 +234,13 @@ TXO {sel_contract} {best["CP"]}{int(best["履約價"])} 買進 1 口
         unsafe_allow_html=True,
     )
 
-    st.markdown("## 📋 **真成交清單**（按接近目標槓桿排序）")
+    st.markdown("## 📋 **真成交清單**（按槓桿排序）")
+    
+    # 表格顯示格式化
     show_df = df_res[["類型", "履約價", "權利金", "成交量", "槓桿", "Delta", "成本", "價內", "差距"]].head(20).copy()
     show_df["成交量"] = show_df["成交量"].map(lambda x: f"{int(x):,}")
     show_df["成本"] = show_df["成本"].map(lambda x: f"${int(x):,}")
+    
     st.dataframe(show_df, use_container_width=True)
 
 st.caption("⚠️ 期權有歸零風險，僅供學習 | 貝伊果屋出品")
