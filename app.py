@@ -5,7 +5,7 @@
 - CALL / PUT 分開篩選（超清晰！）
 - 全 FinMind 版（無 YF）
 - 新 TOKEN (2026-02-05)
-- 新增：Black-Scholes 理論價格參考
+- 修正：KeyError implied_volatility (安全版)
 """
 
 import streamlit as st
@@ -195,9 +195,14 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
 
     results = []
     
-    # 計算平均 IV 作為無成交合約的參考
-    valid_ivs = pd.to_numeric(target_df['implied_volatility'], errors='coerce').dropna()
-    avg_iv = valid_ivs.median() if not valid_ivs.empty else 0.25
+    # -----------------------------------------
+    # 修正：安全計算平均 IV，避免 KeyError
+    # -----------------------------------------
+    if 'implied_volatility' in target_df.columns:
+        valid_ivs = pd.to_numeric(target_df['implied_volatility'], errors='coerce').dropna()
+        avg_iv = valid_ivs.median() if not valid_ivs.empty else 0.25
+    else:
+        avg_iv = 0.25
 
     for _, row in target_df.iterrows():
         try:
@@ -206,7 +211,7 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
             volume = int(row["volume"])
             cp = str(row["call_put"]).upper()
             
-            # 優先用官方 IV，沒有就用平均值
+            # 安全取得單筆 IV
             iv_val = float(row.get("implied_volatility", 0))
             if iv_val <= 0 or np.isnan(iv_val):
                 iv_val = avg_iv
@@ -228,7 +233,7 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
 
         is_itm = (cp == "CALL" and K <= S_current) or (cp == "PUT" and K >= S_current)
         
-        # 乖離率：市價 vs 理論價
+        # 乖離率
         deviation = (price - bs_price) / bs_price * 100 if bs_price > 0 else 0
 
         results.append({
