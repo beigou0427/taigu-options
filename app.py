@@ -1,7 +1,7 @@
 """
-🔰 台指期權終極新手機：專業術語版 + 情緒特效
-- 原版功能：預設最遠月份、成交價/合理價、10大警示
-- 新增特效：🎈 氣球、❄️ 雪花、🍞 Toast
+🔰 台指期權雙模式系統 (Tabs版)
+- 分頁1：簡易新手機 (新手友善、預設遠月、10大警示)
+- 分頁2：專業戰情室 (自由搜尋、投組管理、風險監控)
 """
 
 import streamlit as st
@@ -12,282 +12,280 @@ import numpy as np
 from scipy.stats import norm
 
 # =========================
-# FINMIND TOKEN
+# Session State
 # =========================
+if 'portfolio' not in st.session_state:
+    st.session_state.portfolio = []
+
 FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMi0wNSAxODo1ODo1MiIsInVzZXJfaWQiOiJiYWdlbDA0MjciLCJpcCI6IjEuMTcyLjEwOC42OSIsImV4cCI6MTc3MDg5MzkzMn0.cojhPC-1LBEFWqG-eakETyteDdeHt5Cqx-hJ9OIK9k0"
 
-st.set_page_config(page_title="台指期權新手器", layout="wide", page_icon="🔥")
-st.markdown("# 🔥 **台指期權新手器** (專業版)")
+st.set_page_config(page_title="台指期權雙模式", layout="wide", page_icon="🔥")
 
 # ---------------------------------
-# 📚 新手教學區 (已收折)
-# ---------------------------------
-with st.expander("📚 **新手村：3分鐘看懂你在選什麼（點我展開）**", expanded=False):
-    st.markdown("""
-    ### 🐣 **第一課：什麼是 CALL 跟 PUT？**
-    *   **CALL (買權)** 📈：覺得台指會 **大漲**。
-    *   **PUT (賣權)** 📉：覺得台指會 **大跌**。
-
-    ### 💰 **第二課：成交價 vs 合理價**
-    *   **🟢 成交價**：市場真實交易價（有成交量）
-    *   **🔵 合理價**：Black-Scholes 理論計算價（無成交時參考）
-    
-    ### 📊 **第三課：關鍵數字**
-    *   **價內 (ITM)**：現在履約會賺錢。槓桿低、勝率高。
-    *   **Delta (Δ)**：跟漲係數。0.5 代表台指漲 1 點，合約漲 0.5 點。
-    *   **遠月合約**：時間價值流失慢，適合波段持有。
-    """)
-
-# ---------------------------------
-# 資料載入
+# 資料載入 & BS公式
 # ---------------------------------
 @st.cache_data(ttl=300)
-def get_data(token: str):
-    if not token: raise ValueError("無 TOKEN")
+def get_data(token):
     dl = DataLoader()
     dl.login_by_token(api_token=token)
-    
     end_str = date.today().strftime("%Y-%m-%d")
     start_str = (date.today() - timedelta(days=10)).strftime("%Y-%m-%d")
-
-    # 1. 抓大盤
+    
     try:
         index_df = dl.taiwan_stock_daily("TAIEX", start_date=start_str, end_date=end_str)
-        if not index_df.empty:
-            S_current = float(index_df["close"].iloc[-1])
-            data_date = index_df["date"].iloc[-1]
-        else:
-            futures_df = dl.taiwan_futures_daily("TX", start_date=start_str, end_date=end_str)
-            if not futures_df.empty:
-                S_current = float(futures_df["close"].iloc[-1])
-                data_date = futures_df["date"].iloc[-1]
-            else:
-                S_current = 23000.0
-                data_date = end_str
-    except:
-        S_current = 23000.0
-        data_date = end_str
+        S = float(index_df["close"].iloc[-1]) if not index_df.empty else 23000.0
+    except: S = 23000.0
 
-    # 2. 抓期權
-    opt_start_str = (date.today() - timedelta(days=5)).strftime("%Y-%m-%d")
-    df = dl.taiwan_option_daily("TXO", start_date=opt_start_str, end_date=end_str)
+    opt_start = (date.today() - timedelta(days=5)).strftime("%Y-%m-%d")
+    df = dl.taiwan_option_daily("TXO", start_date=opt_start, end_date=end_str)
     
-    if df.empty: return S_current, pd.DataFrame(), pd.to_datetime(data_date)
+    if df.empty: return S, pd.DataFrame(), pd.to_datetime(end_str)
     
     df["date"] = pd.to_datetime(df["date"])
-    latest_date = df["date"].max()
-    df_latest = df[df["date"] == latest_date].copy()
-    display_date = max(latest_date, pd.to_datetime(data_date))
+    latest = df["date"].max()
+    return S, df[df["date"] == latest].copy(), latest
 
-    return S_current, df_latest, display_date
-
-with st.spinner("載入全市場資料..."):
-    try:
-        S_current, df_latest, latest_date = get_data(FINMIND_TOKEN)
-    except:
-        st.error("資料載入失敗，請檢查 Token 或網路")
-        st.stop()
-
-m1, m2 = st.columns(2)
-m1.metric("📈 加權指數", f"{S_current:,.0f}")
-m2.metric("📊 資料日期", latest_date.strftime("%Y-%m-%d"))
-
-if df_latest.empty: st.stop()
-
-# ---------------------------------
-# 操作區
-# ---------------------------------
-st.markdown("---")
-c1, c2, c3, c4 = st.columns(4)
-
-with c1:
-    st.markdown("### 1️⃣ 方向")
-    direction = st.radio("預測", ["CALL 📈 (看漲)", "PUT 📉 (看跌)"], horizontal=True, label_visibility="collapsed")
-    target_cp = "CALL" if "CALL" in direction else "PUT"
-
-with c2:
-    st.markdown("### 2️⃣ 月份 (預設遠月)")
-    all_contracts = sorted(df_latest["contract_date"].astype(str).unique())
-    ym_now = int(latest_date.strftime("%Y%m"))
-    future_contracts = [c for c in all_contracts if c.isdigit() and int(c) >= ym_now]
-    
-    # 預設選最遠月合約 (波段持有)
-    default_idx = len(future_contracts) - 1 if future_contracts else 0
-    sel_contract = st.selectbox("合約", future_contracts, index=default_idx, label_visibility="collapsed")
-
-with c3:
-    st.markdown("### 3️⃣ 槓桿")
-    target_lev = st.slider("倍數", 1.5, 20.0, 5.0, 0.5, label_visibility="collapsed")
-
-with c4:
-    st.markdown("### 4️⃣ 篩選")
-    safe_mode = st.checkbox("🔰 穩健模式", value=True, help="剔除深價外高風險合約")
-
-# ---------------------------------
-# 核心計算邏輯
-# ---------------------------------
 def bs_price_delta(S, K, T, r, sigma, cp):
-    """Black-Scholes 模型"""
-    if T <= 0 or sigma <= 0:
-        intrinsic = max(S - K, 0) if cp == "CALL" else max(K - S, 0)
-        return float(intrinsic), (1.0 if intrinsic > 0 else 0.0)
+    if T <= 0: return 0.0, 0.5
     try:
         d1 = (np.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma * np.sqrt(T))
         d2 = d1 - sigma * np.sqrt(T)
-        if cp == "CALL":
-            return float(S * norm.cdf(d1) - K * np.exp(-r*T) * norm.cdf(d2)), float(norm.cdf(d1))
-        else:
-            return float(K * np.exp(-r*T) * norm.cdf(-d2) - S * norm.cdf(-d1)), float(-norm.cdf(-d1))
-    except:
-        return 0.0, 0.5
+        if cp == "CALL": return S*norm.cdf(d1)-K*np.exp(-r*T)*norm.cdf(d2), norm.cdf(d1)
+        return K*np.exp(-r*T)*norm.cdf(-d2)-S*norm.cdf(-d1), -norm.cdf(-d1)
+    except: return 0.0, 0.5
 
-def calculate_win_rate(delta, days, hist_win=0.80, margin_call=0.02, cost=0.015):
-    """勝率估算"""
-    if days <= 0: return 0.0
-    p_itm = delta
-    raw_win = (p_itm * 0.7 + hist_win * 0.3) 
-    adj_win = raw_win * (1 - margin_call) * (1 - cost) * 100
-    return min(max(adj_win, 1.0), 99.0)
+def calculate_win_rate(delta, days):
+    return min(max((abs(delta)*0.7 + 0.8*0.3)*100, 1), 99)
 
-if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=True):
-    target_df = df_latest[
-        (df_latest["contract_date"].astype(str) == str(sel_contract)) & 
-        (df_latest["call_put"].str.upper() == target_cp)
-    ].copy()
-
+with st.spinner("載入數據中..."):
     try:
-        y, m = int(sel_contract[:4]), int(sel_contract[4:6])
-        exp_date = date(y, m, 15)
-        days_left = max((exp_date - latest_date.date()).days, 1)
-    except: days_left = 30
-    T = days_left / 365.0
-
-    # 計算隱含波動率中位數
-    if 'implied_volatility' in target_df.columns:
-        valid_ivs = pd.to_numeric(target_df['implied_volatility'], errors='coerce').dropna()
-        avg_iv = valid_ivs.median() if not valid_ivs.empty else 0.20
-    else: avg_iv = 0.20
-
-    results = []
-    for _, row in target_df.iterrows():
-        try:
-            K = float(row["strike_price"])
-            price = float(row["close"])
-            volume = int(row["volume"])
-            
-            iv_val = float(row.get("implied_volatility", 0))
-            if iv_val <= 0 or np.isnan(iv_val): iv_val = avg_iv
-
-            bs_price, delta = bs_price_delta(S_current, K, T, 0.02, iv_val, target_cp)
-            delta_abs = abs(delta)
-
-            if safe_mode and delta_abs < 0.15: continue
-
-            # 修改點：成交價 vs 合理價
-            if volume > 0 and price > 0:
-                calc_price = int(round(price, 0))  # 整數化
-                status = "🟢 成交價"
-            else:
-                calc_price = int(round(bs_price, 0))  # 整數化
-                status = "🔵 合理價"
-
-            if calc_price <= 0: continue
-            
-            leverage = (delta_abs * S_current) / calc_price
-            win_rate = calculate_win_rate(delta_abs, days_left)
-            is_itm = (target_cp == "CALL" and K <= S_current) or (target_cp == "PUT" and K >= S_current)
-
-            results.append({
-                "狀態": status,
-                "履約價": int(K),
-                "參考價": calc_price,  # 已整數
-                "槓桿": round(leverage, 2),
-                "成交量": volume,
-                "Delta": round(delta_abs, 2),
-                "勝率": round(win_rate, 1),
-                "位置": "價內" if is_itm else "價外",
-                "差距": abs(leverage - target_lev)
-            })
-        except: continue
-
-    df_res = pd.DataFrame(results)
-    if df_res.empty:
-        st.warning("無符合條件的合約")
-        st.toast("⚠️ 找不到合約", icon="❌")
+        S_current, df_latest, latest_date = get_data(FINMIND_TOKEN)
+    except:
+        st.error("無法連線")
         st.stop()
 
-    df_res = df_res.sort_values("差距").reset_index(drop=True)
-    best = df_res.iloc[0]
+# ==========================================
+# 介面開始
+# ==========================================
+st.markdown("# 🔥 **台指期權雙模式系統**")
+tab1, tab2 = st.tabs(["🔰 **簡易新手機** (推薦)", "🔥 **專業戰情室** (投組)"])
 
-    # === 特效1：搜尋成功 ===
-    st.balloons()  # 🎈 氣球雨
-    st.toast("🎉 成功找到最佳合約！", icon="🚀")
-    
-    # ---------------------------
-    # 🏆 最佳推薦合約
-    # ---------------------------
-    st.markdown("### 🚀 **最佳推薦合約**")
-    
-    c1, c2 = st.columns([2, 1])
+# ==========================================
+# 分頁 1：簡易新手機 (原版)
+# ==========================================
+with tab1:
+    with st.expander("📚 **新手村：3分鐘看懂**", expanded=False):
+        st.markdown("""
+        ### 🐣 **Call vs Put**
+        *   **CALL (買權)** 📈：看漲
+        *   **PUT (賣權)** 📉：看跌
+        ### 💰 **成交價 vs 合理價**
+        *   **🟢 成交價**：真實交易價格
+        *   **🔵 合理價**：理論計算價格 (無量時參考)
+        """)
+
+    m1, m2 = st.columns(2)
+    m1.metric("📈 加權指數", f"{S_current:,.0f}")
+    m2.metric("📊 資料日期", latest_date.strftime("%Y-%m-%d"))
+
+    st.divider()
+    c1, c2, c3, c4 = st.columns(4)
+
     with c1:
-        st.markdown(f"# **{int(best['履約價']):,}**")
-        st.caption(f"{best['狀態']} | {best['位置']} | 成交量：{int(best['成交量']):,}")
+        st.markdown("### 1️⃣ 方向")
+        direction = st.radio("預測", ["CALL 📈", "PUT 📉"], horizontal=True, label_visibility="collapsed")
+        target_cp = "CALL" if "CALL" in direction else "PUT"
+
     with c2:
-        if target_cp == "CALL":
-            st.success("📈 **看漲 CALL**")
-        else:
-            st.error("📉 **看跌 PUT**")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("⚡ 槓桿倍數", f"{best['槓桿']}x")
-    col2.metric("🔥 勝率估算", f"{best['勝率']}%")
-    col3.metric("📊 Delta", f"{best['Delta']}")
-    col4.metric("💰 參考價", f"{best['參考價']}點")
-    
-    st.markdown("---")
+        st.markdown("### 2️⃣ 月份 (預設遠月)")
+        if not df_latest.empty:
+            all_contracts = sorted(df_latest["contract_date"].astype(str).unique())
+            ym_now = int(latest_date.strftime("%Y%m"))
+            future_contracts = [c for c in all_contracts if c.isdigit() and int(c) >= ym_now]
+            default_idx = len(future_contracts)-1 if future_contracts else 0
+            sel_contract = st.selectbox("合約", future_contracts, index=default_idx, label_visibility="collapsed")
+        else: sel_contract = ""
 
-    # ---------------------------
-    # ⚠️ 10大嚴厲警示 (折疊版)
-    # ---------------------------
-    with st.expander("⚠️ **操作前必看：10 大高風險警示 (點我展開)**", expanded=False):
+    with c3:
+        st.markdown("### 3️⃣ 槓桿")
+        target_lev = st.slider("倍數", 1.5, 20.0, 5.0, 0.5, label_visibility="collapsed")
+
+    with c4:
+        st.markdown("### 4️⃣ 篩選")
+        safe_mode = st.checkbox("🔰 穩健模式", value=True)
+
+    if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=True):
+        if df_latest.empty:
+            st.error("無資料")
+        else:
+            target_df = df_latest[(df_latest["contract_date"].astype(str) == sel_contract) & 
+                                  (df_latest["call_put"].str.upper() == target_cp)].copy()
+            
+            y, m = int(sel_contract[:4]), int(sel_contract[4:6])
+            days_left = max((date(y, m, 15) - latest_date.date()).days, 1)
+            T = days_left / 365.0
+            avg_iv = 0.2
+            
+            results = []
+            for _, row in target_df.iterrows():
+                try:
+                    K = float(row["strike_price"])
+                    price = float(row["close"])
+                    vol = int(row["volume"])
+                    bs_p, delta = bs_price_delta(S_current, K, T, 0.02, avg_iv, target_cp)
+                    delta_abs = abs(delta)
+                    
+                    if safe_mode and delta_abs < 0.15: continue
+
+                    if vol > 0 and price > 0:
+                        calc_price = int(round(price, 0))
+                        status = "🟢 成交價"
+                    else:
+                        calc_price = int(round(bs_p, 0))
+                        status = "🔵 合理價"
+                    
+                    if calc_price <= 0: continue
+                    
+                    lev = (delta_abs * S_current) / calc_price
+                    win = calculate_win_rate(delta_abs, days_left)
+                    
+                    results.append({
+                        "履約價": int(K),
+                        "參考價": calc_price,
+                        "槓桿": round(lev, 2),
+                        "成交量": volume,
+                        "Delta": round(delta_abs, 2),
+                        "勝率": round(win, 0),
+                        "狀態": status,
+                        "差距": abs(lev - target_lev)
+                    })
+                except: continue
+            
+            if results:
+                results.sort(key=lambda x: x['差距'])
+                best = results[0]
+                
+                st.balloons() # 🎉
+                st.toast("🎉 找到最佳合約！", icon="🚀")
+
+                st.divider()
+                st.markdown("### 🚀 **最佳推薦合約**")
+                
+                c1, c2 = st.columns([2, 1])
+                c1.metric(f"履約價 {best['履約價']}", f"{best['參考價']} 點", f"{best['狀態']}")
+                c2.success(f"{target_cp} 看{'漲' if target_cp=='CALL' else '跌'}")
+                
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("槓桿", f"{best['槓桿']}x")
+                k2.metric("勝率", f"{best['勝率']}%")
+                k3.metric("Delta", best['Delta'])
+                k4.metric("成交量", best['成交量'])
+                
+                st.divider()
+                
+                # 10大警示
+                with st.expander("⚠️ **操作前必看：10 大高風險警示**", expanded=False):
+                    st.error("3️⃣ **資金鐵律**：1 口成本至少準備 **20倍** 本金，否則不要碰！")
+                    st.error("6️⃣ **停損鐵律**：權利金跌 **20%** 立即平倉！")
+                    st.warning("8️⃣ **時間風險**：到期前 30 天 Theta 加速，建議平倉。")
+                    if days_left <= 30:
+                        st.toast("🚨 警告：即將到期！", icon="⚠️")
+                    
+                st.markdown("### 📋 其他候選")
+                st.dataframe(pd.DataFrame(results).head(10)[["履約價","參考價","槓桿","勝率","Delta","狀態"]], use_container_width=True)
+            else:
+                st.warning("無符合條件合約")
+
+# ==========================================
+# 分頁 2：專業戰情室 (投組管理)
+# ==========================================
+with tab2:
+    col_search, col_portfolio = st.columns([1.2, 0.8])
+    
+    # 左欄：搜尋
+    with col_search:
+        st.markdown("### 1️⃣ 合約搜尋")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            dir_mode = st.selectbox("方向", ["CALL 📈", "PUT 📉"], key="pro_dir")
+            target_cp_2 = "CALL" if "CALL" in dir_mode else "PUT"
+        with c2:
+            if not df_latest.empty:
+                cons = sorted(df_latest["contract_date"].astype(str).unique())
+                future_c = [c for c in cons if c.isdigit() and int(c) >= int(latest_date.strftime("%Y%m"))]
+                sel_con_2 = st.selectbox("合約", future_c, index=len(future_c)-1 if future_c else 0, key="pro_con")
+            else: sel_con_2 = ""
+        with c3:
+            lev_2 = st.slider("槓桿", 2.0, 15.0, 5.0, key="pro_lev")
+
+        if st.button("🔥 搜尋", key="search_btn", use_container_width=True):
+            if not df_latest.empty:
+                tdf = df_latest[(df_latest["contract_date"].astype(str) == sel_con_2) & 
+                                (df_latest["call_put"].str.upper() == target_cp_2)].copy()
+                
+                y, m = int(sel_con_2[:4]), int(sel_con_2[4:6])
+                dl_2 = max((date(y, m, 15) - latest_date.date()).days, 1)
+                T_2 = dl_2 / 365.0
+                
+                res_2 = []
+                for _, row in tdf.iterrows():
+                    try:
+                        K = float(row["strike_price"])
+                        price = float(row["close"])
+                        vol = int(row["volume"])
+                        bs_p, d = bs_price_delta(S_current, K, T_2, 0.02, 0.2, target_cp_2)
+                        d_abs = abs(d)
+                        
+                        if d_abs < 0.05: continue 
+                        
+                        cp = int(round(price, 0)) if vol > 0 else int(round(bs_p, 0))
+                        if cp <= 0: continue
+                        
+                        l = (d_abs * S_current) / cp
+                        w = calculate_win_rate(d_abs, dl_2)
+                        
+                        res_2.append({
+                            "合約": sel_con_2, "類型": target_cp_2, "履約價": int(K),
+                            "價格": cp, "槓桿": round(l, 2), "Delta": round(d_abs, 2),
+                            "勝率": f"{int(w)}%", "剩餘天": dl_2, "差距": abs(l - lev_2)
+                        })
+                    except: continue
+                
+                if res_2:
+                    res_2.sort(key=lambda x: x['差距'])
+                    st.session_state.search_results = res_2
+                    st.session_state.best_match = res_2[0]
         
-        lev = best['槓桿']
-        if lev < 6:
-            st.success("1️⃣ 🟢 **風險等級：相對安全** (槓桿 <6x)，但仍有虧損風險。")
-        elif lev < 12:
-            st.warning("1️⃣ 🟡 **風險等級：中等** (槓桿 6~12x)，波動劇烈，務必設停損。")
+        # 顯示搜尋結果與加入按鈕
+        if 'best_match' in st.session_state and st.session_state.best_match:
+            b = st.session_state.best_match
+            st.success(f"🏆 推薦：{b['履約價']} {b['類型']} ({b['槓桿']}x)")
+            if st.button("➕ 加入投組", key="add_pf"):
+                exists = any(p['履約價'] == b['履約價'] and p['合約'] == b['合約'] for p in st.session_state.portfolio)
+                if not exists: 
+                    st.session_state.portfolio.append(b)
+                    st.snow() # ❄️
+                    st.toast("✅ 已加入投組", icon="❄️")
+                else:
+                    st.toast("⚠️ 已在投組中")
+            
+            st.dataframe(pd.DataFrame(st.session_state.search_results)[["履約價","價格","槓桿","勝率"]], use_container_width=True)
+
+    # 右欄：投組
+    with col_portfolio:
+        st.markdown("### 2️⃣ 投組管理")
+        if st.session_state.portfolio:
+            pf = pd.DataFrame(st.session_state.portfolio)
+            st.metric("總權利金", f"{pf['價格'].sum()} 點")
+            
+            def risk_color(val):
+                color = 'red' if val <= 30 else 'orange' if val <= 90 else 'green'
+                return f'color: {color}; font-weight: bold'
+            
+            st.dataframe(pf[["合約","履約價","槓桿","剩餘天"]].style.map(risk_color, subset=['剩餘天']), use_container_width=True)
+            
+            if st.button("🗑️ 清空"):
+                st.session_state.portfolio = []
+                st.rerun()
         else:
-            st.error("1️⃣ 🔴 **風險等級：極度危險** (槓桿 >12x)，新手慎入，極易歸零。")
-
-        profit_100 = int(best['Delta'] * 100 * 50)
-        st.info(f"2️⃣ 📊 **雙面情境**：台指做對 100 點賺 **${profit_100:,}**；做錯 100 點虧 **同樣金額**。")
-
-        contract_cost = best['參考價'] * 50
-        st.error(f"3️⃣ 💰 **資金鐵律**：1 口成本 **${int(contract_cost):,}**。本金至少要準備 **20倍**，否則不要碰！")
-
-        wr = best['勝率']
-        st.markdown(f"4️⃣ 📉 **機率**：勝率約 **{wr}%**，代表有 **{100-wr:.0f}%** 機率會賠錢。")
-
-        delta = best['Delta']
-        st.markdown(f"5️⃣ 🧠 **波動**：Delta {delta}，{'波動劇烈' if delta > 0.5 else '波動較緩'}。")
-
-        st.error("6️⃣ 🛑 **停損鐵律**：權利金跌 **20%** 立即平倉！")
-        st.warning("7️⃣ ⚖️ **倉位限制**：總帳戶勿超過 **10%** 買期權。")
-
-        if days_left <= 7:
-            st.error("8️⃣ ⏰ **時間風險**：即將到期！歸零風險極高！")
-            # === 特效2：時間風險警示 ===
-            st.toast("🚨 警告：即將到期！", icon="⚠️")
-        else:
-            st.info(f"8️⃣ ⏰ **時間優勢**：距到期還有 {days_left} 天，時間價值流失較慢 (適合波段)。")
-
-        st.markdown("9️⃣ 🧘 **心態**：期權不是賭博，**絕不凹單**。")
-        st.error("🔟 🚨 **警告**：期權有 **100% 歸零風險**，切勿借錢投資！")
-
-    # ---------------------------
-    # 📋 列表顯示
-    # ---------------------------
-    st.markdown("### 📋 其他候選合約")
-    show_df = df_res[["狀態","履約價","參考價","槓桿","勝率","Delta","位置","成交量"]].head(20).copy()
-    show_df["勝率"] = show_df["勝率"].map(lambda x: f"{x}%")
-    st.dataframe(show_df, use_container_width=True)
+            st.info("投組為空")
