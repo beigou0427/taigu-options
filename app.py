@@ -5,6 +5,7 @@
 - CALL / PUT 分開篩選
 - 全 FinMind + Black-Scholes + 勝率系統
 - 預設開啟「穩健模式」(剔除深價外)
+- UI 全面升級：專業簡潔配色
 """
 
 import streamlit as st
@@ -110,7 +111,6 @@ if df_latest.empty: st.stop()
 # 操作區
 # ---------------------------------
 st.markdown("---")
-# 改成 4 個欄位
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
@@ -131,7 +131,6 @@ with c3:
 
 with c4:
     st.markdown("### 4️⃣ 篩選")
-    # 預設開啟穩健模式 (剔除深價外)
     safe_mode = st.checkbox("🔰 穩健模式 (剔除深價外)", value=True, help="過濾掉勝率極低、槓桿過高的價外合約，適合新手")
 
 st.info(f"🎯 **目標：{sel_contract} 月，{target_lev} 倍槓桿，含勝率分析！**")
@@ -158,17 +157,9 @@ def calculate_win_rate(delta, days, hist_win=0.80, premium_ratio=0.85, margin_ca
     """獨家勝率估算模型"""
     if days <= 0: return 0.0
     T = days / 365.0
-    
-    # Delta 代表大概率 (粗略估計)
     p_itm = delta  # 價內機率近似於 Delta
-    
-    # 結合歷史勝率因子調整
-    # 對買方而言，Delta 越高 (越價內)，勝率越高
     raw_win = (p_itm * 0.7 + hist_win * 0.3) 
-    
-    # 扣除滑價與交易成本影響
     adj_win = raw_win * (1 - margin_call) * (1 - cost) * 100
-    
     return min(max(adj_win, 1.0), 99.0)
 
 if st.button("🎯 **全開計算！**", type="primary", use_container_width=True):
@@ -184,7 +175,6 @@ if st.button("🎯 **全開計算！**", type="primary", use_container_width=Tru
     except: days_left = 30
     T = days_left / 365.0
 
-    # 計算平均 IV
     if 'implied_volatility' in target_df.columns:
         valid_ivs = pd.to_numeric(target_df['implied_volatility'], errors='coerce').dropna()
         avg_iv = valid_ivs.median() if not valid_ivs.empty else 0.20
@@ -203,14 +193,8 @@ if st.button("🎯 **全開計算！**", type="primary", use_container_width=Tru
             bs_price, delta = bs_price_delta(S_current, K, T, 0.02, iv_val, target_cp)
             delta_abs = abs(delta)
 
-            # --- 穩健模式篩選 ---
-            if safe_mode:
-                # 剔除深價外 (Delta < 0.15) 或是 極度深價外
-                # Delta < 0.15 通常勝率極低，屬於賭博性質
-                if delta_abs < 0.15: continue
-            # --------------------
+            if safe_mode and delta_abs < 0.15: continue
 
-            # 價格處理
             if volume > 0 and price > 0:
                 calc_price = price
                 status = "🟢 真成交"
@@ -221,8 +205,6 @@ if st.button("🎯 **全開計算！**", type="primary", use_container_width=Tru
             if calc_price <= 0.1: continue
             
             leverage = (delta_abs * S_current) / calc_price
-            
-            # 計算勝率
             win_rate = calculate_win_rate(delta_abs, days_left)
             
             is_itm = (target_cp == "CALL" and K <= S_current) or (target_cp == "PUT" and K >= S_current)
@@ -252,19 +234,56 @@ if st.button("🎯 **全開計算！**", type="primary", use_container_width=Tru
 
     st.balloons()
     
-    bg_color = "#d4edda" if target_cp == "CALL" else "#f8d7da"
-    border_color = "#28a745" if target_cp == "CALL" else "#dc3545"
+    # 簡潔專業配色設定
+    if target_cp == "CALL":
+        accent_color = "#2e7d32"  # 深綠
+        light_color = "#e8f5e9"   # 淺綠背景
+    else:
+        accent_color = "#c62828"  # 深紅
+        light_color = "#ffebee"   # 淺紅背景
 
+    # 最佳推薦卡片 (專業簡潔版)
     st.markdown(f"""
-    <div style='background:{bg_color};padding:20px;border-radius:10px;text-align:center;border:2px solid {border_color}'>
-    <h2>🚀 最佳推薦：{best['履約價']} ({best['狀態']})</h2>
-    <h3>⚡ 槓桿：{best['槓桿']}x (目標 {target_lev}x) | Δ {best['Delta']}</h3>
-    <h3 style='color:#d63384'>🔥 勝率估算：{best['勝率']}%</h3>
-    <p><strong>{best['位置']} | 參考價：{best['參考價']}</strong></p>
+    <div style='
+        background-color: white;
+        border-left: 6px solid {accent_color};
+        padding: 24px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        margin-bottom: 20px;
+    '>
+        <h3 style='margin: 0; color: #555; font-size: 1.1em;'>🚀 最佳推薦合約</h3>
+        <div style='display: flex; align-items: baseline; gap: 12px; margin: 8px 0;'>
+            <h1 style='margin: 0; color: {accent_color}; font-size: 2.8em;'>{int(best["履約價"])}</h1>
+            <span style='background: {light_color}; color: {accent_color}; padding: 4px 8px; border-radius: 4px; font-weight: bold;'>{best["狀態"]}</span>
+        </div>
+        
+        <div style='display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-top: 20px;'>
+            <div>
+                <div style='color: #888; font-size: 0.9em;'>槓桿倍數</div>
+                <div style='font-size: 1.4em; font-weight: bold; color: #333;'>{best["槓桿"]}x</div>
+            </div>
+            <div>
+                <div style='color: #888; font-size: 0.9em;'>勝率估算</div>
+                <div style='font-size: 1.4em; font-weight: bold; color: {accent_color};'>{best["勝率"]}%</div>
+            </div>
+            <div>
+                <div style='color: #888; font-size: 0.9em;'>Delta</div>
+                <div style='font-size: 1.4em; font-weight: bold; color: #333;'>{best["Delta"]}</div>
+            </div>
+            <div>
+                <div style='color: #888; font-size: 0.9em;'>參考價</div>
+                <div style='font-size: 1.4em; font-weight: bold; color: #333;'>{best["參考價"]}</div>
+            </div>
+        </div>
+        
+        <div style='margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee; color: #666; font-size: 0.9em;'>
+            {best["位置"]} | 成交量：{int(best["成交量"]):,}
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("### 📋 完整清單 (含 Delta 與 勝率)")
+    st.markdown("### 📋 完整清單")
     
     show_df = df_res[["狀態","履約價","參考價","槓桿","勝率","Delta","位置","成交量"]].head(20).copy()
     show_df["勝率"] = show_df["勝率"].map(lambda x: f"{x}%")
