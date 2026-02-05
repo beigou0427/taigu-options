@@ -1,7 +1,7 @@
 """
 🔰 台指期權終極新手機：合約月份自由選！
 - 新手教學 + 槓桿真篩選 + 月份自由選 + 只顯示真成交
-- 完全無錯版 + Cloud 部署版
+- 硬編碼 TOKEN 版（本地/Cloud 通用）
 """
 
 import streamlit as st
@@ -42,7 +42,7 @@ with st.expander("📚 **新手必看教學**", expanded=True):
         """)
 
 # ---------------------------------
-# 資料載入
+# 資料載入（硬編碼 TOKEN）
 # ---------------------------------
 @st.cache_data(ttl=300)
 def get_data():
@@ -50,11 +50,9 @@ def get_data():
         tx_data = yf.download('^TWII', period='5d', progress=False)
         S_current = float(tx_data['Close'].dropna().iloc[-1])
         
-        TOKEN = st.secrets.get("finmind_token", "")
-        if not TOKEN:
-            st.error("請在 Cloud Secrets 設定 finmind_token")
-            st.stop()
-            
+        # ★★★ 硬編碼 TOKEN（請用你的新 TOKEN 取代） ★★★
+        TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMi0wNCAwMTowNDowMyIsInVzZXJfaWQiOiJiYWdlbDA0MjciLCJlbWFpbCI6ImFzZDc4MzM1MjBAeWFob28uY29tLnR3IiwiaXAiOiIxLjE3Mi4xMDguNjkifQ.svsiG2FxPiuQPTsYgODId5uKXJ8imkWGORIgLKeFBpU"
+        
         dl = DataLoader()
         dl.login_by_token(api_token=TOKEN)
         end_date = date.today().strftime('%Y-%m-%d')
@@ -68,6 +66,7 @@ def get_data():
         return S_current, df_latest, latest_date
     except Exception as e:
         st.error(f"資料載入失敗：{e}")
+        st.info("⚠️ TOKEN 過期？請去 https://finmindtrade.com 產生新 TOKEN 取代程式碼第 44 行")
         st.stop()
         return 23000, pd.DataFrame(), pd.Timestamp.now()
 
@@ -82,15 +81,13 @@ if df_latest.empty:
     st.stop()
 
 # ---------------------------------
-# 操作區：4 大按鈕
+# 操作區
 # ---------------------------------
 st.markdown("---")
 st.markdown("## **🎮 操作超簡單！**")
 
-# 策略 + 月份 + 槓桿 一排顯示
 col1, col2, col3 = st.columns(3)
 
-# 左：策略按鈕
 with col1:
     st.markdown("### **玩法**")
     if st.button("🛡️ **長期**", type="primary" if st.session_state.get('mode', 'long') == 'long' else 'secondary'):
@@ -98,16 +95,13 @@ with col1:
     if st.button("⚡ **短期**", type="primary" if st.session_state.get('mode', 'long') == 'short' else 'secondary'):
         st.session_state.mode = 'short'
 
-# 中：合約月份下拉選單
 with col2:
     st.markdown("### **月份**")
     all_contracts = sorted(df_latest['contract_date'].unique())
     future_contracts = [c for c in all_contracts if str(c).isdigit() and int(str(c)) >= int(latest_date.strftime('%Y%m'))]
     sel_contract = st.selectbox("📅 選月份", future_contracts, 
-                               index=len(future_contracts)-3 if len(future_contracts)>3 else 0,
-                               help="長期選遠月，短期選近月")
+                               index=len(future_contracts)-3 if len(future_contracts)>3 else 0)
 
-# 右：槓桿滑桿
 with col3:
     st.markdown("### **槓桿**")
     mode = st.session_state.get('mode', 'long')
@@ -119,7 +113,7 @@ with col3:
 st.info(f"🎯 **目標：{sel_contract} 月，{target_lev} 倍槓桿，只秀真成交！**")
 
 # ---------------------------------
-# 計算按鈕
+# 計算（只秀真成交）
 # ---------------------------------
 if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=True):
     
@@ -129,7 +123,7 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
         st.error(f"{sel_contract} 無資料")
         st.stop()
     
-    # 計算參數
+    # 到期日
     try:
         y, m = int(sel_contract[:4]), int(sel_contract[4:6])
         exp_date = date(y, m, 15)
@@ -153,14 +147,13 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
     for _, row in target_df.iterrows():
         K = float(row['strike_price'])
         price = float(row['close'])
-        volume = int(row['volume'])  # 只取真成交！
+        volume = int(row['volume'])
         
-        # 只顯示有真成交的合約！
+        # 只顯示真成交！
         if price < 1 or volume == 0:
             continue
             
         cp = row['call_put']
-        
         delta = bs_delta(S_current, K, T, 0.02, 0.25, cp)
         delta_abs = abs(delta)
         leverage = (delta_abs * S_current) / price
@@ -181,10 +174,9 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
         st.warning("⚠️ 該月份無真成交合約，請試其他月份")
         st.stop()
     
-    # 按槓桿差距排序
+    # 排序
     df_res['差距'] = abs(df_res['槓桿'] - target_lev)
     df_res = df_res.sort_values('差距')
-    
     best = df_res.iloc[0]
     
     # 最佳推薦
@@ -217,4 +209,4 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
                   annotation_text=f"你的目標：{target_lev}x")
     st.plotly_chart(fig, use_container_width=True)
 
-st.caption("⚠️ 期權有歸零風險，僅供學習 | 貝伊果屋出品")
+st.caption("⚠️ 期權有歸零風險，僅供學習 | 貝伊果屋出品 🔥")
