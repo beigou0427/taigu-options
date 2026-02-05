@@ -3,12 +3,11 @@
 - 新手教學 + 槓桿真篩選 + 月份自由選
 - 只顯示真成交（volume > 0）
 - 無分布圖（移除 Plotly）
-- TOKEN 硬編碼版（本地/Cloud 通用）
+- 完全棄用 YF，全 FinMind 版
 """
 
 import streamlit as st
 import pandas as pd
-import yfinance as yf
 from datetime import date, timedelta
 from FinMind.data import DataLoader
 import numpy as np
@@ -51,42 +50,65 @@ with st.expander("📚 **新手必看教學**", expanded=True):
         )
 
 # ---------------------------------
-# 資料載入
+# 資料載入 (全 FinMind)
 # ---------------------------------
 @st.cache_data(ttl=300)
 def get_data(token: str):
     if not token:
         raise ValueError("FINMIND_TOKEN 尚未設定")
 
-    # 1. 台指報價
-    try:
-        tx_data = yf.download("^TWII", period="5d", progress=False)
-        if tx_data.empty:
-            S_current = 23000.0  # fallback
-        else:
-            S_current = float(tx_data["Close"].dropna().iloc[-1])
-    except:
-        S_current = 23000.0
-
-    # 2. 期權資料
     dl = DataLoader()
     dl.login_by_token(api_token=token)
 
-    end_date = date.today().strftime("%Y-%m-%d")
-    start_date = (date.today() - timedelta(days=60)).strftime("%Y-%m-%d")
+    # 設定抓取範圍 (抓近 5 天，確保有資料)
+    end_str = date.today().strftime("%Y-%m-%d")
+    start_str = (date.today() - timedelta(days=10)).strftime("%Y-%m-%d")
 
-    df = dl.taiwan_option_daily("TXO", start_date=start_date, end_date=end_date)
+    # 1. 抓大盤指數 (TAIEX)
+    # FinMind 的加權指數 ID 是 'TAIEX'
+    try:
+        index_df = dl.taiwan_stock_daily("TAIEX", start_date=start_str, end_date=end_str)
+        if not index_df.empty:
+            S_current = float(index_df["close"].iloc[-1])
+            data_date = index_df["date"].iloc[-1]
+        else:
+            # 備案：抓台指期 (TX) 近月
+            futures_df = dl.taiwan_futures_daily("TX", start_date=start_str, end_date=end_str)
+            if not futures_df.empty:
+                # 這裡簡單取最後一筆 (通常是近月)
+                S_current = float(futures_df["close"].iloc[-1])
+                data_date = futures_df["date"].iloc[-1]
+            else:
+                S_current = 31800.0  # 最後防線
+                data_date = end_str
+    except:
+        S_current = 31800.0
+        data_date = end_str
+
+    # 2. 抓期權資料 (TXO)
+    # 注意：Option 資料量大，FinMind 有時會慢，縮短天數
+    opt_start_str = (date.today() - timedelta(days=5)).strftime("%Y-%m-%d")
+    df = dl.taiwan_option_daily("TXO", start_date=opt_start_str, end_date=end_str)
+    
     if df.empty:
-        return S_current, pd.DataFrame(), pd.Timestamp.now()
+        return S_current, pd.DataFrame(), pd.to_datetime(data_date)
         
     df["date"] = pd.to_datetime(df["date"])
     latest_date = df["date"].max()
+    
+    # 過濾出最新一天的期權資料
     df_latest = df[df["date"] == latest_date].copy()
 
-    return S_current, df_latest, latest_date
+    # 如果期權資料日期 比 大盤日期新，優先顯示期權日期
+    if latest_date > pd.to_datetime(data_date):
+        display_date = latest_date
+    else:
+        display_date = pd.to_datetime(data_date)
+
+    return S_current, df_latest, display_date
 
 
-with st.spinner("載入報價..."):
+with st.spinner("載入 FinMind 資料..."):
     try:
         S_current, df_latest, latest_date = get_data(FINMIND_TOKEN)
     except Exception as e:
@@ -94,11 +116,11 @@ with st.spinner("載入報價..."):
         st.stop()
 
 m1, m2 = st.columns(2)
-m1.metric("📈 台指", f"{S_current:,.0f}")
-m2.metric("📊 時間", latest_date.strftime("%Y-%m-%d"))
+m1.metric("📈 加權指數", f"{S_current:,.0f}")
+m2.metric("📊 資料日期", latest_date.strftime("%Y-%m-%d"))
 
 if df_latest.empty:
-    st.error("目前無資料（可能是剛開盤或 TOKEN 問題）")
+    st.error("目前無期權資料 (可能剛開盤或 TOKEN 問題)")
     st.stop()
 
 # ---------------------------------
@@ -112,7 +134,6 @@ c1, c2, c3 = st.columns(3)
 with c1:
     st.markdown("### **玩法**")
     mode_now = st.session_state.get("mode", "long")
-
     if st.button("🛡️ **長期**", type="primary" if mode_now == "long" else "secondary"):
         st.session_state.mode = "long"
     if st.button("⚡ **短期**", type="primary" if mode_now == "short" else "secondary"):
@@ -120,6 +141,7 @@ with c1:
 
 with c2:
     st.markdown("### **月份**")
+    # 轉字串避免排序錯誤
     all_contracts = sorted(df_latest["contract_date"].astype(str).unique())
     ym_now = int(latest_date.strftime("%Y%m"))
     future_contracts = [c for c in all_contracts if c.isdigit() and int(c) >= ym_now]
@@ -165,7 +187,9 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
     try:
         y, m = int(sel_contract[:4]), int(sel_contract[4:6])
         exp_date = date(y, m, 15)
-        days_left = max((exp_date - date.today()).days, 1)
+        # 用資料日期算剩餘天數，比較準
+        data_dt = latest_date.date()
+        days_left = max((exp_date - data_dt).days, 1)
     except:
         days_left = 30
 
@@ -181,15 +205,18 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
         except:
             continue
 
-        # 只顯示真成交
-        if volume <= 0:
-            continue
-        if price < 1:
-            continue
+        if volume <= 0: continue
+        if price < 0.1: continue  # 過濾極小值
 
         delta = bs_delta(S_current, K, T, 0.02, 0.25, cp)
         delta_abs = abs(delta)
-        leverage = (delta_abs * S_current) / price
+        
+        # 槓桿保護：避免 price 太小導致無限大
+        if price > 0:
+            leverage = (delta_abs * S_current) / price
+        else:
+            leverage = 0
+
         is_itm = (cp == "CALL" and K <= S_current) or (cp == "PUT" and K >= S_current)
 
         results.append({
@@ -207,10 +234,10 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
     df_res = pd.DataFrame(results)
 
     if df_res.empty:
-        st.warning("⚠️ 該月份無真成交合約，請試其他月份")
+        st.warning("⚠️ 該月份無真成交合約")
         st.stop()
 
-    # 排序：先找最接近目標槓桿的
+    # 排序
     df_res["差距"] = (df_res["槓桿"] - float(target_lev)).abs()
     df_res = df_res.sort_values(["差距", "成交量"], ascending=[True, False]).reset_index(drop=True)
 
@@ -234,13 +261,10 @@ TXO {sel_contract} {best["CP"]}{int(best["履約價"])} 買進 1 口
         unsafe_allow_html=True,
     )
 
-    st.markdown("## 📋 **真成交清單**（按槓桿排序）")
-    
-    # 表格顯示格式化
+    st.markdown("## 📋 **真成交清單**")
     show_df = df_res[["類型", "履約價", "權利金", "成交量", "槓桿", "Delta", "成本", "價內", "差距"]].head(20).copy()
     show_df["成交量"] = show_df["成交量"].map(lambda x: f"{int(x):,}")
     show_df["成本"] = show_df["成本"].map(lambda x: f"${int(x):,}")
-    
     st.dataframe(show_df, use_container_width=True)
 
 st.caption("⚠️ 期權有歸零風險，僅供學習 | 貝伊果屋出品")
