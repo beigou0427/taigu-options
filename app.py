@@ -2,8 +2,8 @@
 🔰 台指期權終極新手機：合約月份自由選！
 - 新手教學 + 槓桿真篩選 + 月份自由選
 - 只顯示真成交（volume > 0）
-- 無分布圖（移除 Plotly）
-- 完全棄用 YF，全 FinMind 版
+- CALL / PUT 分開篩選（超清晰！）
+- 全 FinMind 版
 """
 
 import streamlit as st
@@ -60,33 +60,28 @@ def get_data(token: str):
     dl = DataLoader()
     dl.login_by_token(api_token=token)
 
-    # 設定抓取範圍 (抓近 5 天，確保有資料)
     end_str = date.today().strftime("%Y-%m-%d")
     start_str = (date.today() - timedelta(days=10)).strftime("%Y-%m-%d")
 
     # 1. 抓大盤指數 (TAIEX)
-    # FinMind 的加權指數 ID 是 'TAIEX'
     try:
         index_df = dl.taiwan_stock_daily("TAIEX", start_date=start_str, end_date=end_str)
         if not index_df.empty:
             S_current = float(index_df["close"].iloc[-1])
             data_date = index_df["date"].iloc[-1]
         else:
-            # 備案：抓台指期 (TX) 近月
             futures_df = dl.taiwan_futures_daily("TX", start_date=start_str, end_date=end_str)
             if not futures_df.empty:
-                # 這裡簡單取最後一筆 (通常是近月)
                 S_current = float(futures_df["close"].iloc[-1])
                 data_date = futures_df["date"].iloc[-1]
             else:
-                S_current = 31800.0  # 最後防線
+                S_current = 31800.0  # fallback
                 data_date = end_str
     except:
         S_current = 31800.0
         data_date = end_str
 
     # 2. 抓期權資料 (TXO)
-    # 注意：Option 資料量大，FinMind 有時會慢，縮短天數
     opt_start_str = (date.today() - timedelta(days=5)).strftime("%Y-%m-%d")
     df = dl.taiwan_option_daily("TXO", start_date=opt_start_str, end_date=end_str)
     
@@ -95,11 +90,8 @@ def get_data(token: str):
         
     df["date"] = pd.to_datetime(df["date"])
     latest_date = df["date"].max()
-    
-    # 過濾出最新一天的期權資料
     df_latest = df[df["date"] == latest_date].copy()
 
-    # 如果期權資料日期 比 大盤日期新，優先顯示期權日期
     if latest_date > pd.to_datetime(data_date):
         display_date = latest_date
     else:
@@ -120,7 +112,7 @@ m1.metric("📈 加權指數", f"{S_current:,.0f}")
 m2.metric("📊 資料日期", latest_date.strftime("%Y-%m-%d"))
 
 if df_latest.empty:
-    st.error("目前無期權資料 (可能剛開盤或 TOKEN 問題)")
+    st.error("目前無期權資料")
     st.stop()
 
 # ---------------------------------
@@ -132,16 +124,13 @@ st.markdown("## **🎮 操作超簡單！**")
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    st.markdown("### **玩法**")
-    mode_now = st.session_state.get("mode", "long")
-    if st.button("🛡️ **長期**", type="primary" if mode_now == "long" else "secondary"):
-        st.session_state.mode = "long"
-    if st.button("⚡ **短期**", type="primary" if mode_now == "short" else "secondary"):
-        st.session_state.mode = "short"
+    st.markdown("### **玩法（多空分開）**")
+    # 這裡改成 CALL / PUT 選單
+    direction = st.radio("方向", ["CALL 📈 (看漲)", "PUT 📉 (看跌)"], horizontal=True)
+    target_cp = "CALL" if "CALL" in direction else "PUT"
 
 with c2:
     st.markdown("### **月份**")
-    # 轉字串避免排序錯誤
     all_contracts = sorted(df_latest["contract_date"].astype(str).unique())
     ym_now = int(latest_date.strftime("%Y%m"))
     future_contracts = [c for c in all_contracts if c.isdigit() and int(c) >= ym_now]
@@ -155,20 +144,16 @@ with c2:
 
 with c3:
     st.markdown("### **槓桿**")
-    mode_now = st.session_state.get("mode", "long")
-    if mode_now == "long":
-        target_lev = st.slider("穩穩賺", 1.5, 6.0, 2.5, 0.5)
-    else:
-        target_lev = st.slider("拚大錢", 5.0, 25.0, 12.0, 1.0)
+    # 簡化：不分長短期，直接選倍數
+    target_lev = st.slider("想要幾倍？", 2.0, 20.0, 5.0, 0.5)
 
-st.info(f"🎯 **目標：{sel_contract} 月，{target_lev} 倍槓桿，只秀真成交！**")
+st.info(f"🎯 **目標：{sel_contract} 月，{target_lev} 倍槓桿，只找 {target_cp}！**")
 
 # ---------------------------------
 # 計算
 # ---------------------------------
 def bs_delta(S, K, T, r, sigma, cp):
-    if T <= 0 or sigma <= 0:
-        return 0.5
+    if T <= 0 or sigma <= 0: return 0.5
     try:
         d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
         if cp == "CALL":
@@ -178,16 +163,18 @@ def bs_delta(S, K, T, r, sigma, cp):
         return 0.5
 
 if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=True):
-    target_df = df_latest[df_latest["contract_date"].astype(str) == str(sel_contract)].copy()
+    target_df = df_latest[
+        (df_latest["contract_date"].astype(str) == str(sel_contract)) & 
+        (df_latest["call_put"].str.upper() == target_cp)  # 只篩選選定的方向
+    ].copy()
 
     if target_df.empty:
-        st.error(f"{sel_contract} 無資料")
+        st.error(f"{sel_contract} 無 {target_cp} 資料")
         st.stop()
 
     try:
         y, m = int(sel_contract[:4]), int(sel_contract[4:6])
         exp_date = date(y, m, 15)
-        # 用資料日期算剩餘天數，比較準
         data_dt = latest_date.date()
         days_left = max((exp_date - data_dt).days, 1)
     except:
@@ -206,12 +193,11 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
             continue
 
         if volume <= 0: continue
-        if price < 0.1: continue  # 過濾極小值
+        if price < 0.1: continue
 
         delta = bs_delta(S_current, K, T, 0.02, 0.25, cp)
         delta_abs = abs(delta)
         
-        # 槓桿保護：避免 price 太小導致無限大
         if price > 0:
             leverage = (delta_abs * S_current) / price
         else:
@@ -234,21 +220,26 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
     df_res = pd.DataFrame(results)
 
     if df_res.empty:
-        st.warning("⚠️ 該月份無真成交合約")
+        st.warning(f"⚠️ 該月份無 {target_cp} 真成交合約")
         st.stop()
 
-    # 排序
     df_res["差距"] = (df_res["槓桿"] - float(target_lev)).abs()
+    # 排序：先找最接近目標槓桿的
     df_res = df_res.sort_values(["差距", "成交量"], ascending=[True, False]).reset_index(drop=True)
 
     best = df_res.iloc[0]
 
     st.balloons()
-    st.markdown("## 🎉 **最佳真成交合約！**")
+    st.markdown(f"## 🎉 **最佳 {target_cp} 合約！**")
+    
+    # 根據方向換顏色
+    bg_color = "#d4edda" if target_cp == "CALL" else "#f8d7da"  # CALL綠/PUT紅
+    border_color = "#28a745" if target_cp == "CALL" else "#dc3545"
+
     st.markdown(
         f"""
-<div style='background: linear-gradient(135deg, #d4edda, #c3e6cb); padding: 25px;
-            border-radius: 15px; border: 3px solid #28a745; text-align: center;'>
+<div style='background: linear-gradient(135deg, {bg_color}, #ffffff); padding: 25px;
+            border-radius: 15px; border: 3px solid {border_color}; text-align: center;'>
 <h1>🚀 **{int(best["履約價"]):,}**</h1>
 <h2>⚡ **{best["槓桿"]}x** (目標 {target_lev}x)</h2>
 <p><strong>{best["類型"]} | {best["Delta"]} Δ | {int(best["成交量"]):,} 張 | ${int(best["成本"]):,}</strong></p>
@@ -261,8 +252,8 @@ TXO {sel_contract} {best["CP"]}{int(best["履約價"])} 買進 1 口
         unsafe_allow_html=True,
     )
 
-    st.markdown("## 📋 **真成交清單**")
-    show_df = df_res[["類型", "履約價", "權利金", "成交量", "槓桿", "Delta", "成本", "價內", "差距"]].head(20).copy()
+    st.markdown(f"## 📋 **{target_cp} 真成交清單**")
+    show_df = df_res[["履約價", "權利金", "成交量", "槓桿", "Delta", "成本", "價內", "差距"]].head(20).copy()
     show_df["成交量"] = show_df["成交量"].map(lambda x: f"{int(x):,}")
     show_df["成本"] = show_df["成本"].map(lambda x: f"${int(x):,}")
     st.dataframe(show_df, use_container_width=True)
