@@ -1,8 +1,9 @@
 """
-🔰 台指期權終極新手機：波段長線版
-- 預設選擇「最遠月份」(保護時間價值)
+🔰 台指期權終極新手機：專業術語版
+- 預設最遠月份 (波段持有)
+- 「成交價」vs「合理價」
 - 新手教學 & 警示收折
-- 核心功能：FinMind 數據 + Black-Scholes 理論價 + 獨家勝率
+- 核心功能：FinMind 數據 + Black-Scholes + 勝率
 """
 
 import streamlit as st
@@ -18,7 +19,7 @@ from scipy.stats import norm
 FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMi0wNSAxODo1ODo1MiIsInVzZXJfaWQiOiJiYWdlbDA0MjciLCJpcCI6IjEuMTcyLjEwOC42OSIsImV4cCI6MTc3MDg5MzkzMn0.cojhPC-1LBEFWqG-eakETyteDdeHt5Cqx-hJ9OIK9k0"
 
 st.set_page_config(page_title="台指期權新手器", layout="wide", page_icon="🔥")
-st.markdown("# 🔥 **台指期權新手器** (波段版)")
+st.markdown("# 🔥 **台指期權新手器** (專業版)")
 
 # ---------------------------------
 # 📚 新手教學區 (已收折)
@@ -29,13 +30,14 @@ with st.expander("📚 **新手村：3分鐘看懂你在選什麼（點我展開
     *   **CALL (買權)** 📈：覺得台指會 **大漲**。
     *   **PUT (賣權)** 📉：覺得台指會 **大跌**。
 
-    ### 💰 **第二課：為什麼預設「遠月合約」？**
-    *   **近月 (剩幾天)**：像買樂透，時間價值每天狂掉，適合短沖高手。
-    *   **遠月 (剩幾個月)**：像買股票，時間價值流失慢，**適合波段持有**。
+    ### 💰 **第二課：成交價 vs 合理價**
+    *   **🟢 成交價**：市場真實交易價（有成交量）
+    *   **🔵 合理價**：Black-Scholes 理論計算價（無成交時參考）
     
-    ### 📊 **第三課：那些難懂的數字？**
+    ### 📊 **第三課：關鍵數字**
     *   **價內 (ITM)**：現在履約會賺錢。槓桿低、勝率高。
     *   **Delta (Δ)**：跟漲係數。0.5 代表台指漲 1 點，合約漲 0.5 點。
+    *   **遠月合約**：時間價值流失慢，適合波段持有。
     """)
 
 # ---------------------------------
@@ -111,7 +113,7 @@ with c2:
     ym_now = int(latest_date.strftime("%Y%m"))
     future_contracts = [c for c in all_contracts if c.isdigit() and int(c) >= ym_now]
     
-    # 修改點：預設 index 指向最後一個 (最遠月)
+    # 預設選最遠月合約 (波段持有)
     default_idx = len(future_contracts) - 1 if future_contracts else 0
     sel_contract = st.selectbox("合約", future_contracts, index=default_idx, label_visibility="collapsed")
 
@@ -183,12 +185,13 @@ if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=
 
             if safe_mode and delta_abs < 0.15: continue
 
+            # 修改點：成交價 vs 合理價
             if volume > 0 and price > 0:
                 calc_price = price
-                status = "🟢 真成交"
+                status = "🟢 成交價"  # <--- 修改
             else:
                 calc_price = bs_price
-                status = "🔵 模擬"
+                status = "🔵 合理價"  # <--- 修改
 
             if calc_price <= 0.1: continue
             
@@ -197,7 +200,7 @@ if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=
             is_itm = (target_cp == "CALL" and K <= S_current) or (target_cp == "PUT" and K >= S_current)
 
             results.append({
-                "狀態": status,
+                "狀態": status,  # 已更新
                 "履約價": int(K),
                 "參考價": round(calc_price, 1),
                 "槓桿": round(leverage, 2),
@@ -273,7 +276,6 @@ if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=
         if days_left <= 7:
             st.error("8️⃣ ⏰ **時間風險**：即將到期！歸零風險極高！")
         else:
-            # 這裡也會自動顯示較長的天數 (因為預設選遠月)
             st.info(f"8️⃣ ⏰ **時間優勢**：距到期還有 {days_left} 天，時間價值流失較慢 (適合波段)。")
 
         st.markdown("9️⃣ 🧘 **心態**：期權不是賭博，**絕不凹單**。")
