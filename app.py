@@ -1,7 +1,8 @@
 """
-🔰 台指期權雙模式系統 (Tabs版)
-- 分頁1：簡易新手機 (新手友善、預設遠月、10大警示)
-- 分頁2：專業戰情室 (自由搜尋、投組管理、風險監控)
+🔰 台指期權雙模式系統 (Tabs修復版)
+- 修復：簡易版過濾邏輯放寬，確保能找到合約
+- 分頁1：簡易新手機 (新手友善、特效、10大警示)
+- 分頁2：專業戰情室 (自由搜尋、投組管理)
 """
 
 import streamlit as st
@@ -16,6 +17,8 @@ from scipy.stats import norm
 # =========================
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = []
+if 'search_res_easy' not in st.session_state:
+    st.session_state.search_res_easy = []
 
 FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMi0wNSAxODo1ODo1MiIsInVzZXJfaWQiOiJiYWdlbDA0MjciLCJpcCI6IjEuMTcyLjEwOC42OSIsImV4cCI6MTc3MDg5MzkzMn0.cojhPC-1LBEFWqG-eakETyteDdeHt5Cqx-hJ9OIK9k0"
 
@@ -71,7 +74,7 @@ st.markdown("# 🔥 **台指期權雙模式系統**")
 tab1, tab2 = st.tabs(["🔰 **簡易新手機** (推薦)", "🔥 **專業戰情室** (投組)"])
 
 # ==========================================
-# 分頁 1：簡易新手機 (原版)
+# 分頁 1：簡易新手機 (已修復)
 # ==========================================
 with tab1:
     with st.expander("📚 **新手村：3分鐘看懂**", expanded=False):
@@ -112,7 +115,8 @@ with tab1:
 
     with c4:
         st.markdown("### 4️⃣ 篩選")
-        safe_mode = st.checkbox("🔰 穩健模式", value=True)
+        # 修正提示：說明過濾範圍
+        safe_mode = st.checkbox("🔰 穩健模式", value=True, help="僅過濾極度價外 (Delta < 0.05)")
 
     if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=True):
         if df_latest.empty:
@@ -124,7 +128,11 @@ with tab1:
             y, m = int(sel_contract[:4]), int(sel_contract[4:6])
             days_left = max((date(y, m, 15) - latest_date.date()).days, 1)
             T = days_left / 365.0
-            avg_iv = 0.2
+            
+            if 'implied_volatility' in target_df.columns:
+                ivs = pd.to_numeric(target_df['implied_volatility'], errors='coerce').dropna()
+                avg_iv = ivs.median() if not ivs.empty else 0.2
+            else: avg_iv = 0.2
             
             results = []
             for _, row in target_df.iterrows():
@@ -135,7 +143,11 @@ with tab1:
                     bs_p, delta = bs_price_delta(S_current, K, T, 0.02, avg_iv, target_cp)
                     delta_abs = abs(delta)
                     
-                    if safe_mode and delta_abs < 0.15: continue
+                    # === 簡易版關鍵修復：放寬過濾 ===
+                    if safe_mode:
+                        if delta_abs < 0.05: continue  # 寬鬆過濾
+                    else:
+                        if delta_abs < 0.01: continue
 
                     if vol > 0 and price > 0:
                         calc_price = int(round(price, 0))
@@ -153,7 +165,7 @@ with tab1:
                         "履約價": int(K),
                         "參考價": calc_price,
                         "槓桿": round(lev, 2),
-                        "成交量": volume,
+                        "成交量": vol,
                         "Delta": round(delta_abs, 2),
                         "勝率": round(win, 0),
                         "狀態": status,
@@ -164,6 +176,7 @@ with tab1:
             if results:
                 results.sort(key=lambda x: x['差距'])
                 best = results[0]
+                st.session_state.search_res_easy = results # 存狀態
                 
                 st.balloons() # 🎉
                 st.toast("🎉 找到最佳合約！", icon="🚀")
@@ -227,13 +240,18 @@ with tab2:
                 dl_2 = max((date(y, m, 15) - latest_date.date()).days, 1)
                 T_2 = dl_2 / 365.0
                 
+                if 'implied_volatility' in tdf.columns:
+                    ivs = pd.to_numeric(tdf['implied_volatility'], errors='coerce').dropna()
+                    a_iv = ivs.median() if not ivs.empty else 0.2
+                else: a_iv = 0.2
+
                 res_2 = []
                 for _, row in tdf.iterrows():
                     try:
                         K = float(row["strike_price"])
                         price = float(row["close"])
                         vol = int(row["volume"])
-                        bs_p, d = bs_price_delta(S_current, K, T_2, 0.02, 0.2, target_cp_2)
+                        bs_p, d = bs_price_delta(S_current, K, T_2, 0.02, a_iv, target_cp_2)
                         d_abs = abs(d)
                         
                         if d_abs < 0.05: continue 
