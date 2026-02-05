@@ -1,8 +1,7 @@
 """
-🔰 台指期權雙模式系統 (Tabs修復版)
-- 修復：簡易版過濾邏輯放寬，確保能找到合約
-- 分頁1：簡易新手機 (新手友善、特效、10大警示)
-- 分頁2：專業戰情室 (自由搜尋、投組管理)
+🔰 台指期權雙模式系統 (教學回歸版)
+- TAB1：完整新手教學 (Lead Call、風險、名詞解釋) + 簡易操作
+- TAB2：專業戰情室 (投組管理)
 """
 
 import streamlit as st
@@ -74,18 +73,34 @@ st.markdown("# 🔥 **台指期權雙模式系統**")
 tab1, tab2 = st.tabs(["🔰 **簡易新手機** (推薦)", "🔥 **專業戰情室** (投組)"])
 
 # ==========================================
-# 分頁 1：簡易新手機 (已修復)
+# 分頁 1：簡易新手機 (含完整教學)
 # ==========================================
 with tab1:
-    with st.expander("📚 **新手村：3分鐘看懂**", expanded=False):
-        st.markdown("""
-        ### 🐣 **Call vs Put**
-        *   **CALL (買權)** 📈：看漲
-        *   **PUT (賣權)** 📉：看跌
-        ### 💰 **成交價 vs 合理價**
-        *   **🟢 成交價**：真實交易價格
-        *   **🔵 合理價**：理論計算價格 (無量時參考)
-        """)
+    # === 完整新手教學區 (Lead Call / Theta / 名詞解釋) ===
+    with st.expander("📚 **新手村：Lead Call 策略與名詞解釋（點我展開）**", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("""
+            ### 🐣 **基礎名詞**
+            *   **CALL (買權)** 📈：看漲。
+            *   **PUT (賣權)** 📉：看跌。
+            *   **成交價** 🟢：市場真實價格。
+            *   **合理價** 🔵：理論計算價格 (無量時參考)。
+            
+            ### 🚀 **Lead Call 長期策略**
+            1.  **買進**：選 **遠月 (季月)**，剩餘 >90 天。
+            2.  **持有**：讓 Delta 成長，槓桿自然放大。
+            3.  **賣出**：**剩餘 30~90 天** 賣出 (避開 Theta 加速區)。
+            """)
+        with c2:
+            st.markdown("### 📉 **時間價值風險燈號**")
+            risk_data = {
+                "剩餘天數": [">90天", "30~90天", "<30天"],
+                "狀態": ["🟢 安全 (持有)", "🟡 警戒 (準備賣)", "🔴 危險 (Theta加速)"],
+                "動作": ["安心持有", "獲利了結", "強制平倉"]
+            }
+            st.dataframe(pd.DataFrame(risk_data), use_container_width=True)
+            st.info("💡 **核心觀念**：遠月合約像股票，近月合約像樂透。新手請選遠月！")
 
     m1, m2 = st.columns(2)
     m1.metric("📈 加權指數", f"{S_current:,.0f}")
@@ -115,7 +130,6 @@ with tab1:
 
     with c4:
         st.markdown("### 4️⃣ 篩選")
-        # 修正提示：說明過濾範圍
         safe_mode = st.checkbox("🔰 穩健模式", value=True, help="僅過濾極度價外 (Delta < 0.05)")
 
     if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=True):
@@ -131,8 +145,8 @@ with tab1:
             
             if 'implied_volatility' in target_df.columns:
                 ivs = pd.to_numeric(target_df['implied_volatility'], errors='coerce').dropna()
-                avg_iv = ivs.median() if not ivs.empty else 0.2
-            else: avg_iv = 0.2
+                a_iv = ivs.median() if not ivs.empty else 0.2
+            else: a_iv = 0.2
             
             results = []
             for _, row in target_df.iterrows():
@@ -140,14 +154,10 @@ with tab1:
                     K = float(row["strike_price"])
                     price = float(row["close"])
                     vol = int(row["volume"])
-                    bs_p, delta = bs_price_delta(S_current, K, T, 0.02, avg_iv, target_cp)
+                    bs_p, delta = bs_price_delta(S_current, K, T, 0.02, a_iv, target_cp)
                     delta_abs = abs(delta)
                     
-                    # === 簡易版關鍵修復：放寬過濾 ===
-                    if safe_mode:
-                        if delta_abs < 0.05: continue  # 寬鬆過濾
-                    else:
-                        if delta_abs < 0.01: continue
+                    if safe_mode and delta_abs < 0.05: continue
 
                     if vol > 0 and price > 0:
                         calc_price = int(round(price, 0))
@@ -176,7 +186,7 @@ with tab1:
             if results:
                 results.sort(key=lambda x: x['差距'])
                 best = results[0]
-                st.session_state.search_res_easy = results # 存狀態
+                st.session_state.search_res_easy = results
                 
                 st.balloons() # 🎉
                 st.toast("🎉 找到最佳合約！", icon="🚀")
