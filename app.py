@@ -1,9 +1,9 @@
 """
-🔰 台指期權終極新手機：專業術語版
+🔰 台指期權終極新手機：期權價格整數版
 - 預設最遠月份 (波段持有)
 - 「成交價」vs「合理價」
+- 期權價格：整數點 (實際交易標準)
 - 新手教學 & 警示收折
-- 核心功能：FinMind 數據 + Black-Scholes + 勝率
 """
 
 import streamlit as st
@@ -31,8 +31,8 @@ with st.expander("📚 **新手村：3分鐘看懂你在選什麼（點我展開
     *   **PUT (賣權)** 📉：覺得台指會 **大跌**。
 
     ### 💰 **第二課：成交價 vs 合理價**
-    *   **🟢 成交價**：市場真實交易價（有成交量）
-    *   **🔵 合理價**：Black-Scholes 理論計算價（無成交時參考）
+    *   **🟢 成交價**：市場真實交易價（以「點」為單位）
+    *   **🔵 合理價**：Black-Scholes 理論計算價（整數點）
     
     ### 📊 **第三課：關鍵數字**
     *   **價內 (ITM)**：現在履約會賺錢。槓桿低、勝率高。
@@ -113,7 +113,6 @@ with c2:
     ym_now = int(latest_date.strftime("%Y%m"))
     future_contracts = [c for c in all_contracts if c.isdigit() and int(c) >= ym_now]
     
-    # 預設選最遠月合約 (波段持有)
     default_idx = len(future_contracts) - 1 if future_contracts else 0
     sel_contract = st.selectbox("合約", future_contracts, index=default_idx, label_visibility="collapsed")
 
@@ -164,7 +163,6 @@ if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=
     except: days_left = 30
     T = days_left / 365.0
 
-    # 計算隱含波動率中位數
     if 'implied_volatility' in target_df.columns:
         valid_ivs = pd.to_numeric(target_df['implied_volatility'], errors='coerce').dropna()
         avg_iv = valid_ivs.median() if not valid_ivs.empty else 0.20
@@ -185,24 +183,24 @@ if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=
 
             if safe_mode and delta_abs < 0.15: continue
 
-            # 修改點：成交價 vs 合理價
+            # 修改點：期權價格整數化
             if volume > 0 and price > 0:
-                calc_price = price
-                status = "🟢 成交價"  # <--- 修改
+                calc_price = int(round(price, 0))  # <--- 整數化
+                status = "🟢 成交價"
             else:
-                calc_price = bs_price
-                status = "🔵 合理價"  # <--- 修改
+                calc_price = int(round(bs_price, 0))  # <--- 整數化
+                status = "🔵 合理價"
 
-            if calc_price <= 0.1: continue
+            if calc_price <= 0: continue
             
             leverage = (delta_abs * S_current) / calc_price
             win_rate = calculate_win_rate(delta_abs, days_left)
             is_itm = (target_cp == "CALL" and K <= S_current) or (target_cp == "PUT" and K >= S_current)
 
             results.append({
-                "狀態": status,  # 已更新
+                "狀態": status,
                 "履約價": int(K),
-                "參考價": round(calc_price, 1),
+                "參考價": calc_price,  # <--- 整數
                 "槓桿": round(leverage, 2),
                 "成交量": volume,
                 "Delta": round(delta_abs, 2),
@@ -241,7 +239,7 @@ if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=
     col1.metric("⚡ 槓桿倍數", f"{best['槓桿']}x")
     col2.metric("🔥 勝率估算", f"{best['勝率']}%")
     col3.metric("📊 Delta", f"{best['Delta']}")
-    col4.metric("💰 參考價", f"{best['參考價']}")
+    col4.metric("💰 參考價", f"{best['參考價']}點")  # <--- 加上「點」
     
     st.markdown("---")
 
@@ -261,7 +259,7 @@ if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=
         profit_100 = int(best['Delta'] * 100 * 50)
         st.info(f"2️⃣ 📊 **雙面情境**：台指做對 100 點賺 **${profit_100:,}**；做錯 100 點虧 **同樣金額**。")
 
-        contract_cost = best['參考價'] * 50
+        contract_cost = best['參考價'] * 50  # <--- 整數計算
         st.error(f"3️⃣ 💰 **資金鐵律**：1 口成本 **${int(contract_cost):,}**。本金至少要準備 **20倍**，否則不要碰！")
 
         wr = best['勝率']
@@ -287,4 +285,5 @@ if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=
     st.markdown("### 📋 其他候選合約")
     show_df = df_res[["狀態","履約價","參考價","槓桿","勝率","Delta","位置","成交量"]].head(20).copy()
     show_df["勝率"] = show_df["勝率"].map(lambda x: f"{x}%")
+    show_df["參考價"] = show_df["參考價"].astype(int)  # <--- 表格也整數化
     st.dataframe(show_df, use_container_width=True)
