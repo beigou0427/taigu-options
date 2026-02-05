@@ -1,7 +1,7 @@
 """
 🔰 台指期權終極新手機：合約月份自由選！
 - 新手教學 + 槓桿真篩選 + 月份自由選 + 只顯示真成交
-- 硬編碼 TOKEN 版（本地/Cloud 通用）
+- 硬編碼 TOKEN 版（無分布圖）
 """
 
 import streamlit as st
@@ -9,7 +9,6 @@ import pandas as pd
 import yfinance as yf
 from datetime import date, timedelta
 from FinMind.data import DataLoader
-import plotly.express as px
 import numpy as np
 from scipy.stats import norm
 
@@ -42,7 +41,7 @@ with st.expander("📚 **新手必看教學**", expanded=True):
         """)
 
 # ---------------------------------
-# 資料載入（硬編碼 TOKEN）
+# 資料載入
 # ---------------------------------
 @st.cache_data(ttl=300)
 def get_data():
@@ -66,13 +65,14 @@ def get_data():
         return S_current, df_latest, latest_date
     except Exception as e:
         st.error(f"資料載入失敗：{e}")
-        st.info("⚠️ TOKEN 過期？請去 https://finmindtrade.com 產生新 TOKEN 取代程式碼第 44 行")
+        st.info("⚠️ TOKEN 過期？請去 https://finmindtrade.com 產生新 TOKEN 取代程式碼第 52 行")
         st.stop()
         return 23000, pd.DataFrame(), pd.Timestamp.now()
 
 with st.spinner("載入報價..."):
     S_current, df_latest, latest_date = get_data()
 
+col1, col2 = st.columns(2)
 col1.metric("📈 台指", f"{S_current:,.0f}")
 col2.metric("📊 時間", latest_date.strftime('%Y-%m-%d'))
 
@@ -113,7 +113,7 @@ with col3:
 st.info(f"🎯 **目標：{sel_contract} 月，{target_lev} 倍槓桿，只秀真成交！**")
 
 # ---------------------------------
-# 計算（只秀真成交）
+# 計算（無圖表版）
 # ---------------------------------
 if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=True):
     
@@ -123,7 +123,6 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
         st.error(f"{sel_contract} 無資料")
         st.stop()
     
-    # 到期日
     try:
         y, m = int(sel_contract[:4]), int(sel_contract[4:6])
         exp_date = date(y, m, 15)
@@ -149,7 +148,6 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
         price = float(row['close'])
         volume = int(row['volume'])
         
-        # 只顯示真成交！
         if price < 1 or volume == 0:
             continue
             
@@ -164,49 +162,4 @@ if st.button("🎯 **找最佳合約！**", type="primary", use_container_width=
             '權利金': round(price, 1),
             '成交量': f"{volume:,}",
             '槓桿': round(leverage, 2),
-            'Delta': round(delta_abs, 2),
-            '成本': f"${int(price*50):,}",
-            '價內': '✅' if (cp == 'CALL' and K <= S_current) or (cp == 'PUT' and K >= S_current) else '⚠️'
-        })
-    
-    df_res = pd.DataFrame(results)
-    if df_res.empty:
-        st.warning("⚠️ 該月份無真成交合約，請試其他月份")
-        st.stop()
-    
-    # 排序
-    df_res['差距'] = abs(df_res['槓桿'] - target_lev)
-    df_res = df_res.sort_values('差距')
-    best = df_res.iloc[0]
-    
-    # 最佳推薦
-    st.balloons()
-    st.markdown("## 🎉 **最佳真成交合約！**")
-    st.markdown(f"""
-    <div style='background: linear-gradient(135deg, #d4edda, #c3e6cb); padding: 25px; 
-                border-radius: 15px; border: 3px solid #28a745; text-align: center;'>
-    <h1>🚀 **{best['履約價']:,}**</h1>
-    <h2>⚡ **{best['槓桿']}x** (目標 {target_lev}x)</h2>
-    <p><strong>{best['類型']} | {best['Delta']} Δ | {best['成交量']} 張 | {best['成本']}</strong></p>
-    <h3>📋 下單指令：</h3>
-    <code style='background: white; padding: 12px; border-radius: 8px; font-size: 18px;'>
-    TXO {sel_contract} {best['類型'][:1]}{best['履約價']} 買進 1 口
-    </code>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # 表格
-    st.markdown("## 📋 **真成交清單** (按槓桿排序)")
-    display_df = df_res[['類型','履約價','權利金','成交量','槓桿','Delta','成本','價內']].head(15)
-    display_df['槓桿差距'] = df_res['差距'].head(15).round(2)
-    st.dataframe(display_df, use_container_width=True)
-    
-    # 圖表
-    st.markdown("## 📊 **真成交槓桿分佈**")
-    fig = px.scatter(df_res, x='履約價', y='槓桿', color='類型', size='成交量',
-                     hover_data=['權利金', '成交量'], title=f'{sel_contract} 真成交槓桿圖')
-    fig.add_hline(y=target_lev, line_dash="dash", line_color="red", 
-                  annotation_text=f"你的目標：{target_lev}x")
-    st.plotly_chart(fig, use_container_width=True)
-
-st.caption("⚠️ 期權有歸零風險，僅供學習 | 貝伊果屋出品 🔥")
+            'Delta': round(delta_abs, 2
