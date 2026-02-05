@@ -1,8 +1,7 @@
 """
-🔰 台指期權終極控制台 (修復版)
-- 槓桿鈕修復：按下立即顯示結果
-- 自由選合約：任何月份、方向、槓桿
-- 投組管理：一鍵加入、風險監控
+🔰 台指期權終極控制台 (勝率顯示版)
+- 修復：勝率欄位已加入搜尋列表與投組。
+- 功能：Delta 邏輯修正 (含低槓桿)、Lead Call 搜尋、投組管理。
 """
 
 import streamlit as st
@@ -17,17 +16,17 @@ from scipy.stats import norm
 # =========================
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = []
-if 'search_active' not in st.session_state:
-    st.session_state.search_active = False # 控制是否顯示搜尋結果
+if 'search_results' not in st.session_state:
+    st.session_state.search_results = []
 if 'best_match' not in st.session_state:
     st.session_state.best_match = None
-if 'candidates' not in st.session_state:
-    st.session_state.candidates = []
+if 'has_searched' not in st.session_state:
+    st.session_state.has_searched = False
 
 FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMi0wNSAxODo1ODo1MiIsInVzZXJfaWQiOiJiYWdlbDA0MjciLCJpcCI6IjEuMTcyLjEwOC42OSIsImV4cCI6MTc3MDg5MzkzMn0.cojhPC-1LBEFWqG-eakETyteDdeHt5Cqx-hJ9OIK9k0"
 
 st.set_page_config(page_title="台指期權終極控制台", layout="wide", page_icon="🔥")
-st.markdown("# 🔥 **台指期權終極控制台** (修復版)")
+st.markdown("# 🔥 **台指期權終極控制台** (勝率顯示版)")
 
 # ---------------------------------
 # 📚 教學區 (可折疊)
@@ -38,7 +37,7 @@ with st.expander("📚 **策略教學與風險警示 (Lead Call / Theta)**", exp
         st.markdown("""
         ### 🚀 **Lead Call 策略 (波段推薦)**
         1.  **選合約**：選 **遠月 (季月)**，剩餘 >90 天。
-        2.  **選履約價**：找 **Delta 0.3~0.5** (價外一兩檔)，槓桿 3~6 倍。
+        2.  **選履約價**：找 **Delta 0.3~0.5** (起手) 或 **0.8+** (穩健)。
         3.  **操作**：持有 2~8 週，待 Delta 成長。
         4.  **出場**：**剩餘 30~90 天** 賣出 (避開 Theta 加速區)。
         """)
@@ -87,7 +86,7 @@ with st.spinner("載入市場數據中..."):
         st.stop()
 
 # ---------------------------------
-# 🔍 側邊欄：自由參數設定
+# 🔍 側邊欄：參數設定
 # ---------------------------------
 st.sidebar.header("🔍 參數設定")
 
@@ -100,7 +99,6 @@ if not df_latest.empty:
     all_contracts = sorted(df_latest["contract_date"].astype(str).unique())
     ym_now = int(latest_date.strftime("%Y%m"))
     future_contracts = [c for c in all_contracts if c.isdigit() and int(c) >= ym_now]
-    # 預設選最遠月
     default_idx = len(future_contracts)-1 if future_contracts else 0
     sel_contract = st.sidebar.selectbox("合約月份 (自由選)", future_contracts, index=default_idx)
 else:
@@ -109,6 +107,7 @@ else:
 
 # 3. 槓桿
 target_lev = st.sidebar.slider("目標槓桿", 2.0, 15.0, 5.0, 0.5)
+safe_mode = st.sidebar.checkbox("🔰 過濾極度價外 (Delta < 0.15)", value=True, help="只隱藏勝率極低的樂透單，保留所有低槓桿合約")
 
 # ---------------------------------
 # 計算核心
@@ -128,7 +127,7 @@ def bs_price_delta(S, K, T, r, sigma, cp):
 col_search, col_portfolio = st.columns([1.2, 0.8])
 
 # =======================
-# 左欄：搜尋結果與列表
+# 左欄：搜尋結果
 # =======================
 with col_search:
     st.markdown(f"### 1️⃣ 合約搜尋 ({sel_contract} {target_cp})")
@@ -146,7 +145,6 @@ with col_search:
             days_left = max((date(y, m, 15) - latest_date.date()).days, 1)
             T = days_left / 365.0
             
-            # 取得波動率
             if 'implied_volatility' in target_df.columns:
                 ivs = pd.to_numeric(target_df['implied_volatility'], errors='coerce').dropna()
                 avg_iv = ivs.median() if not ivs.empty else 0.2
@@ -160,10 +158,13 @@ with col_search:
                     vol = int(row["volume"])
                     
                     bs_p, delta = bs_price_delta(S_current, K, T, 0.02, avg_iv, target_cp)
-                    delta = abs(delta)
+                    delta_abs = abs(delta)
                     
-                    # 寬鬆過濾 (0.1 ~ 0.9) 確保有結果
-                    if not (0.1 <= delta <= 0.9): continue
+                    # === 修正：只過濾極小 Delta (樂透)，保留深價內 (低槓桿) ===
+                    if safe_mode:
+                        if delta_abs < 0.15: continue
+                    else:
+                        if delta_abs < 0.01: continue
 
                     # 價格處理
                     if vol > 0 and price > 0:
@@ -175,40 +176,42 @@ with col_search:
                     
                     if final_price <= 0: continue
                     
-                    lev = (delta * S_current) / final_price
+                    lev = (delta_abs * S_current) / final_price
                     
+                    # 勝率計算 (Delta 越高勝率越高)
+                    win_rate = min(max(delta_abs * 100 * 0.9, 1), 99)
+
                     results.append({
                         "合約": sel_contract,
                         "類型": target_cp,
                         "履約價": int(K),
                         "價格": final_price,
                         "槓桿": round(lev, 2),
-                        "Delta": round(delta, 2),
+                        "Delta": round(delta_abs, 2),
                         "剩餘天": days_left,
                         "狀態": status,
                         "成交量": vol,
+                        "勝率": f"{int(win_rate)}%",
                         "差距": abs(lev - target_lev)
                     })
                 except: continue
             
             if results:
-                # 排序：按差距排
                 sorted_results = sorted(results, key=lambda x: x['差距'])
+                st.session_state.search_results = sorted_results
                 st.session_state.best_match = sorted_results[0]
-                st.session_state.candidates = sorted_results
-                st.session_state.search_active = True
+                st.session_state.has_searched = True
             else:
                 st.warning("無符合條件合約")
-                st.session_state.search_active = False
+                st.session_state.has_searched = False
 
     # === 顯示結果 ===
-    if st.session_state.search_active and st.session_state.best_match:
+    if st.session_state.has_searched and st.session_state.best_match:
         b = st.session_state.best_match
         
         st.divider()
-        st.markdown("#### 🏆 最佳推薦 (最接近目標槓桿)")
+        st.markdown(f"#### 🏆 最佳推薦 ({b['槓桿']}x)")
         
-        # 推薦卡片
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("履約價", f"{b['履約價']}", f"{b['類型']}")
         c2.metric("價格", f"{b['價格']} 點", b['狀態'])
@@ -216,7 +219,7 @@ with col_search:
         c4.metric("Delta", b['Delta'])
         
         if st.button("➕ 加入推薦到投組", type="secondary", use_container_width=True):
-            exists = any(p['履約價'] == b['履約價'] and p['合約'] == b['合約'] and p['類型'] == b['類型'] for p in st.session_state.portfolio)
+            exists = any(p['履約價'] == b['履約價'] and p['合約'] == b['合約'] for p in st.session_state.portfolio)
             if not exists:
                 st.session_state.portfolio.append(b)
                 st.toast("✅ 已加入！")
@@ -224,15 +227,13 @@ with col_search:
                 st.toast("⚠️ 已在投組中")
 
         st.divider()
-        st.markdown("#### 📋 其他候選 (自由選擇)")
+        st.markdown("#### 📋 候選列表 (含勝率)")
         
-        # 顯示完整清單
-        cand_df = pd.DataFrame(st.session_state.candidates)
-        # 按履約價排序方便看
+        cand_df = pd.DataFrame(st.session_state.search_results)
         cand_df = cand_df.sort_values("履約價", ascending=(target_cp=="CALL"))
         
         st.dataframe(
-            cand_df[["履約價", "價格", "槓桿", "Delta", "狀態", "成交量"]],
+            cand_df[["履約價", "價格", "槓桿", "Delta", "勝率", "狀態"]],
             use_container_width=True,
             hide_index=True
         )
@@ -255,16 +256,15 @@ with col_portfolio:
         
         st.divider()
         
-        # 風險監控
         def get_risk(days):
-            if days <= 30: return "🔴 危險 (Theta殺手)"
-            if days <= 90: return "🟡 警戒 (觀察賣點)"
-            return "🟢 安全 (Lead Call)"
+            if days <= 30: return "🔴 危險"
+            if days <= 90: return "🟡 警戒"
+            return "🟢 安全"
 
         pf_df["風險"] = pf_df["剩餘天"].apply(get_risk)
         
         st.dataframe(
-            pf_df[["合約", "履約價", "類型", "風險"]].style.map(
+            pf_df[["履約價", "槓桿", "勝率", "風險"]].style.map(
                 lambda x: 'color: red; font-weight: bold' if '危險' in str(x) else 
                           ('color: orange; font-weight: bold' if '警戒' in str(x) else 'color: green'), 
                 subset=['風險']
@@ -278,4 +278,5 @@ with col_portfolio:
             st.rerun()
             
     else:
-        st.info("👈 **投組目前是空的**\n請搜尋後加入合約")
+        st.info("👈 **投組空**")
+        st.caption("請在左側搜尋並加入合約")
