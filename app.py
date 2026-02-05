@@ -1,9 +1,9 @@
 """
-🔰 台指期權終極新手機：介面優化版
-- 新手教學（預設收起）
-- 10大嚴厲警示（預設收起）
-- 核心功能：FinMind 數據 + Black-Scholes 理論價 + 獨家勝率
-- UI：極簡化，數字優先
+🔰 台指期權終極新手機：預設最遠月版
+- ✅ 預設最遠月合約（長期投資）
+- ✅ 新手教學（折疊）
+- ✅ 10大嚴厲警示（折疊）  
+- ✅ 核心：FinMind + Black-Scholes + 勝率
 """
 
 import streamlit as st
@@ -13,31 +13,20 @@ from FinMind.data import DataLoader
 import numpy as np
 from scipy.stats import norm
 
-# =========================
-# FINMIND TOKEN (請確認 Token 是否有效)
-# =========================
 FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMi0wNSAxODo1ODo1MiIsInVzZXJfaWQiOiJiYWdlbDA0MjciLCJpcCI6IjEuMTcyLjEwOC42OSIsImV4cCI6MTc3MDg5MzkzMn0.cojhPC-1LBEFWqG-eakETyteDdeHt5Cqx-hJ9OIK9k0"
 
 st.set_page_config(page_title="台指期權新手器", layout="wide", page_icon="🔥")
 st.markdown("# 🔥 **台指期權新手器**")
 
 # ---------------------------------
-# 📚 新手教學區 (已收折)
+# 📚 新手教學區 (折疊)
 # ---------------------------------
-with st.expander("📚 **新手村：3分鐘看懂你在選什麼（點我展開）**", expanded=False):
+with st.expander("📚 **新手教學：3分鐘看懂**", expanded=False):
     st.markdown("""
-    ### 🐣 **第一課：什麼是 CALL 跟 PUT？**
-    *   **CALL (買權)** 📈：覺得台指會 **大漲**。
-    *   **PUT (賣權)** 📉：覺得台指會 **大跌**。
-
-    ### 💰 **第二課：為什麼會有「槓桿」？**
-    *   **用小錢參與大盤漲跌，這就是槓桿！**
-    *   槓桿 5 倍 = 台指漲 1%，你的合約賺 5%。
-    
-    ### 📊 **第三課：那些難懂的數字？**
-    *   **價內 (ITM)**：現在履約會賺錢。槓桿低、勝率高。
-    *   **價外 (OTM)**：現在履約會賠錢。槓桿高、像買樂透。
-    *   **Delta (Δ)**：跟漲係數。0.5 代表台指漲 1 點，合約漲 0.5 點。
+    **CALL 📈**：看漲 | **PUT 📉**：看跌
+    **槓桿**：台指漲1%，合約賺N倍
+    **價內**：現在賺錢（穩）| **價外**：現在賠錢（賭）
+    **Delta**：跟漲係數（0.5=台指漲1點，合約漲0.5點）
     """)
 
 # ---------------------------------
@@ -45,32 +34,19 @@ with st.expander("📚 **新手村：3分鐘看懂你在選什麼（點我展開
 # ---------------------------------
 @st.cache_data(ttl=300)
 def get_data(token: str):
-    if not token: raise ValueError("無 TOKEN")
     dl = DataLoader()
     dl.login_by_token(api_token=token)
     
     end_str = date.today().strftime("%Y-%m-%d")
     start_str = (date.today() - timedelta(days=10)).strftime("%Y-%m-%d")
 
-    # 1. 抓大盤
     try:
         index_df = dl.taiwan_stock_daily("TAIEX", start_date=start_str, end_date=end_str)
-        if not index_df.empty:
-            S_current = float(index_df["close"].iloc[-1])
-            data_date = index_df["date"].iloc[-1]
-        else:
-            futures_df = dl.taiwan_futures_daily("TX", start_date=start_str, end_date=end_str)
-            if not futures_df.empty:
-                S_current = float(futures_df["close"].iloc[-1])
-                data_date = futures_df["date"].iloc[-1]
-            else:
-                S_current = 23000.0
-                data_date = end_str
+        S_current = float(index_df["close"].iloc[-1]) if not index_df.empty else 23000.0
+        data_date = index_df["date"].iloc[-1] if not index_df.empty else end_str
     except:
-        S_current = 23000.0
-        data_date = end_str
+        S_current, data_date = 23000.0, end_str
 
-    # 2. 抓期權
     opt_start_str = (date.today() - timedelta(days=5)).strftime("%Y-%m-%d")
     df = dl.taiwan_option_daily("TXO", start_date=opt_start_str, end_date=end_str)
     
@@ -79,22 +55,18 @@ def get_data(token: str):
     df["date"] = pd.to_datetime(df["date"])
     latest_date = df["date"].max()
     df_latest = df[df["date"] == latest_date].copy()
-    display_date = max(latest_date, pd.to_datetime(data_date))
+    return S_current, df_latest, max(latest_date, pd.to_datetime(data_date))
 
-    return S_current, df_latest, display_date
-
-with st.spinner("載入全市場資料..."):
+with st.spinner("載入資料..."):
     try:
         S_current, df_latest, latest_date = get_data(FINMIND_TOKEN)
     except:
-        st.error("資料載入失敗，請檢查 Token 或網路")
+        st.error("資料載入失敗")
         st.stop()
 
 m1, m2 = st.columns(2)
 m1.metric("📈 加權指數", f"{S_current:,.0f}")
 m2.metric("📊 資料日期", latest_date.strftime("%Y-%m-%d"))
-
-if df_latest.empty: st.stop()
 
 # ---------------------------------
 # 操作區
@@ -104,15 +76,16 @@ c1, c2, c3, c4 = st.columns(4)
 
 with c1:
     st.markdown("### 1️⃣ 方向")
-    direction = st.radio("預測", ["CALL 📈 (看漲)", "PUT 📉 (看跌)"], horizontal=True, label_visibility="collapsed")
+    direction = st.radio("預測", ["CALL 📈", "PUT 📉"], horizontal=True, label_visibility="collapsed")
     target_cp = "CALL" if "CALL" in direction else "PUT"
 
 with c2:
-    st.markdown("### 2️⃣ 月份")
+    st.markdown("### 2️⃣ 合約")
     all_contracts = sorted(df_latest["contract_date"].astype(str).unique())
     ym_now = int(latest_date.strftime("%Y%m"))
     future_contracts = [c for c in all_contracts if c.isdigit() and int(c) >= ym_now]
-    sel_contract = st.selectbox("合約", future_contracts, index=0, label_visibility="collapsed")
+    # 🔧 關鍵修正：預設最遠月合約
+    sel_contract = st.selectbox("月份", future_contracts, index=-1, label_visibility="collapsed")
 
 with c3:
     st.markdown("### 3️⃣ 槓桿")
@@ -120,13 +93,14 @@ with c3:
 
 with c4:
     st.markdown("### 4️⃣ 篩選")
-    safe_mode = st.checkbox("🔰 穩健模式", value=True, help="剔除深價外高風險合約")
+    safe_mode = st.checkbox("🔰 穩健模式", value=True, help="剔除高風險價外合約")
+
+st.info(f"🎯 **設定：{sel_contract} 月，{target_lev}x 槓桿**")
 
 # ---------------------------------
-# 核心計算邏輯
+# 核心計算
 # ---------------------------------
 def bs_price_delta(S, K, T, r, sigma, cp):
-    """Black-Scholes 模型"""
     if T <= 0 or sigma <= 0:
         intrinsic = max(S - K, 0) if cp == "CALL" else max(K - S, 0)
         return float(intrinsic), (1.0 if intrinsic > 0 else 0.0)
@@ -135,18 +109,15 @@ def bs_price_delta(S, K, T, r, sigma, cp):
         d2 = d1 - sigma * np.sqrt(T)
         if cp == "CALL":
             return float(S * norm.cdf(d1) - K * np.exp(-r*T) * norm.cdf(d2)), float(norm.cdf(d1))
-        else:
-            return float(K * np.exp(-r*T) * norm.cdf(-d2) - S * norm.cdf(-d1)), float(-norm.cdf(-d1))
+        return float(K * np.exp(-r*T) * norm.cdf(-d2) - S * norm.cdf(-d1)), float(-norm.cdf(-d1))
     except:
         return 0.0, 0.5
 
-def calculate_win_rate(delta, days, hist_win=0.80, margin_call=0.02, cost=0.015):
-    """勝率估算"""
+def calculate_win_rate(delta, days):
     if days <= 0: return 0.0
     p_itm = delta
-    raw_win = (p_itm * 0.7 + hist_win * 0.3) 
-    adj_win = raw_win * (1 - margin_call) * (1 - cost) * 100
-    return min(max(adj_win, 1.0), 99.0)
+    raw_win = (p_itm * 0.7 + 0.8 * 0.3) * 100
+    return min(max(raw_win, 1.0), 99.0)
 
 if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=True):
     target_df = df_latest[
@@ -158,14 +129,13 @@ if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=
         y, m = int(sel_contract[:4]), int(sel_contract[4:6])
         exp_date = date(y, m, 15)
         days_left = max((exp_date - latest_date.date()).days, 1)
-    except: days_left = 30
+    except: days_left = 60
     T = days_left / 365.0
 
-    # 計算隱含波動率中位數
+    avg_iv = 0.20
     if 'implied_volatility' in target_df.columns:
         valid_ivs = pd.to_numeric(target_df['implied_volatility'], errors='coerce').dropna()
         avg_iv = valid_ivs.median() if not valid_ivs.empty else 0.20
-    else: avg_iv = 0.20
 
     results = []
     for _, row in target_df.iterrows():
@@ -182,12 +152,8 @@ if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=
 
             if safe_mode and delta_abs < 0.15: continue
 
-            if volume > 0 and price > 0:
-                calc_price = price
-                status = "🟢 真成交"
-            else:
-                calc_price = bs_price
-                status = "🔵 模擬"
+            calc_price = price if volume > 0 and price > 0 else bs_price
+            status = "🟢 真成交" if volume > 0 and price > 0 else "🔵 模擬"
 
             if calc_price <= 0.1: continue
             
@@ -218,9 +184,7 @@ if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=
 
     st.balloons()
     
-    # ---------------------------
-    # 🏆 最佳推薦合約 (核心顯示)
-    # ---------------------------
+    # 🏆 最佳合約顯示
     st.markdown("### 🚀 **最佳推薦合約**")
     
     c1, c2 = st.columns([2, 1])
@@ -228,59 +192,33 @@ if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=
         st.markdown(f"# **{int(best['履約價']):,}**")
         st.caption(f"{best['狀態']} | {best['位置']} | 成交量：{int(best['成交量']):,}")
     with c2:
-        if target_cp == "CALL":
-            st.success("📈 **看漲 CALL**")
-        else:
-            st.error("📉 **看跌 PUT**")
-    
+        st.markdown("📈 **CALL**" if target_cp == "CALL" else "📉 **PUT**", 
+                   unsafe_allow_html=True if target_cp == "CALL" else True)
+
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("⚡ 槓桿倍數", f"{best['槓桿']}x")
-    col2.metric("🔥 勝率估算", f"{best['勝率']}%")
+    col1.metric("⚡ 槓桿", f"{best['槓桿']}x")
+    col2.metric("🔥 勝率", f"{best['勝率']}%")
     col3.metric("📊 Delta", f"{best['Delta']}")
     col4.metric("💰 參考價", f"{best['參考價']}")
-    
-    st.markdown("---")
 
-    # ---------------------------
-    # ⚠️ 10大嚴厲警示 (折疊版)
-    # ---------------------------
-    with st.expander("⚠️ **操作前必看：10 大高風險警示 (點我展開)**", expanded=False):
-        
+    # ⚠️ 10大警示 (折疊)
+    with st.expander("⚠️ **10 大高風險警示**", expanded=False):
         lev = best['槓桿']
-        if lev < 6:
-            st.success("1️⃣ 🟢 **風險等級：相對安全** (槓桿 <6x)，但仍有虧損風險。")
-        elif lev < 12:
-            st.warning("1️⃣ 🟡 **風險等級：中等** (槓桿 6~12x)，波動劇烈，務必設停損。")
-        else:
-            st.error("1️⃣ 🔴 **風險等級：極度危險** (槓桿 >12x)，新手慎入，極易歸零。")
+        risk_level = "🟢 相對安全" if lev < 6 else "🟡 中等風險" if lev < 12 else "🔴 極度危險"
+        st.markdown(f"**1️⃣ 風險等級**：{risk_level}")
 
         profit_100 = int(best['Delta'] * 100 * 50)
-        st.info(f"2️⃣ 📊 **雙面情境**：台指做對 100 點賺 **${profit_100:,}**；做錯 100 點虧 **同樣金額**。")
-
+        st.info(f"**2️⃣ 情境**：台指±100點，盈虧 **${profit_100:,}**")
+        
         contract_cost = best['參考價'] * 50
-        st.error(f"3️⃣ 💰 **資金鐵律**：1 口成本 **${int(contract_cost):,}**。本金至少要準備 **20倍**，否則不要碰！")
+        st.error(f"**3️⃣ 成本**：1口 **${int(contract_cost):,}**，本金需 **20倍**")
+        
+        st.error("**4️⃣ 停損**：權利金跌 **20%** 立即平倉！")
+        st.warning("**5️⃣ 倉位**：總帳戶勿超 **10%**")
+        st.error("**6️⃣ 最終**：**100% 歸零風險**，只用閒錢！")
 
-        wr = best['勝率']
-        st.markdown(f"4️⃣ 📉 **機率**：勝率約 **{wr}%**，代表有 **{100-wr:.0f}%** 機率會賠錢。")
-
-        delta = best['Delta']
-        st.markdown(f"5️⃣ 🧠 **波動**：Delta {delta}，{'波動劇烈' if delta > 0.5 else '波動較緩'}。")
-
-        st.error("6️⃣ 🛑 **停損鐵律**：權利金跌 **20%** 立即平倉！")
-        st.warning("7️⃣ ⚖️ **倉位限制**：總帳戶勿超過 **10%** 買期權。")
-
-        if days_left <= 7:
-            st.error("8️⃣ ⏰ **時間風險**：即將到期！歸零風險極高！")
-        else:
-            st.info(f"8️⃣ ⏰ **時間風險**：距到期 {days_left} 天。")
-
-        st.markdown("9️⃣ 🧘 **心態**：期權不是賭博，**絕不凹單**。")
-        st.error("🔟 🚨 **警告**：期權有 **100% 歸零風險**，切勿借錢投資！")
-
-    # ---------------------------
-    # 📋 列表顯示
-    # ---------------------------
-    st.markdown("### 📋 其他候選合約")
-    show_df = df_res[["狀態","履約價","參考價","槓桿","勝率","Delta","位置","成交量"]].head(20).copy()
+    # 📋 列表
+    st.markdown("### 📋 候選清單")
+    show_df = df_res[["狀態","履約價","參考價","槓桿","勝率","Delta","位置","成交量"]].head(20)
     show_df["勝率"] = show_df["勝率"].map(lambda x: f"{x}%")
     st.dataframe(show_df, use_container_width=True)
