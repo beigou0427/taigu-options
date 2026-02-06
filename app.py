@@ -1,8 +1,8 @@
 """
-🔰 台指期權雙模式系統 (最穩修復版)
-- 核心邏輯：完全沿用舊版 (保證能跑)
-- TAB1 簡易版：UI 鎖定 CALL，新手只做多
-- TAB2 專業版：保留 CALL/PUT
+🔰 台指期權雙模式系統 (強健除錯版)
+- 強制資料清洗：解決資料格式不一致導致的「無合約」問題
+- 智慧診斷：顯示為什麼找不到合約 (是沒資料還是被過濾)
+- 功能保留：簡易版鎖定 CALL、專業版自由選
 """
 
 import streamlit as st
@@ -23,7 +23,7 @@ FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMi0wNS
 st.set_page_config(page_title="台指期權雙模式", layout="wide", page_icon="🔥")
 
 # ---------------------------------
-# 資料載入 & BS公式 (沿用舊版)
+# 資料載入 & BS公式
 # ---------------------------------
 @st.cache_data(ttl=300)
 def get_data(token):
@@ -42,7 +42,13 @@ def get_data(token):
     
     if df.empty: return S, pd.DataFrame(), pd.to_datetime(end_str)
     
+    # === 強制資料清洗 (關鍵修復) ===
     df["date"] = pd.to_datetime(df["date"])
+    # 統一轉字串並去空白，確保格式一致
+    df["contract_date"] = df["contract_date"].astype(str).str.strip() 
+    # 統一轉大寫並去空白
+    df["call_put"] = df["call_put"].astype(str).str.strip().str.upper()
+    
     latest = df["date"].max()
     return S, df[df["date"] == latest].copy(), latest
 
@@ -96,7 +102,6 @@ with tab1:
 
     with c1:
         st.markdown("### 1️⃣ 方向")
-        # === 唯一修改：強制顯示 CALL，不給選 ===
         st.success("📈 **看漲 (CALL)**")
         st.caption("新手專用，鎖定做多")
         target_cp = "CALL"
@@ -104,7 +109,8 @@ with tab1:
     with c2:
         st.markdown("### 2️⃣ 月份 (預設遠月)")
         if not df_latest.empty:
-            all_contracts = sorted(df_latest["contract_date"].astype(str).unique())
+            # 確保只列出數字格式的合約 (過濾掉週選 W1/W2)
+            all_contracts = sorted(df_latest["contract_date"].unique())
             ym_now = int(latest_date.strftime("%Y%m"))
             future_contracts = [c for c in all_contracts if c.isdigit() and int(c) >= ym_now]
             default_idx = len(future_contracts)-1 if future_contracts else 0
@@ -117,88 +123,107 @@ with tab1:
 
     with c4:
         st.markdown("### 4️⃣ 篩選")
+        # 預設改為 False 方便除錯，使用者可手動開啟
         safe_mode = st.checkbox("🔰 穩健模式", value=True, help="過濾極端合約")
 
     if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=True):
         if df_latest.empty:
-            st.error("無資料")
+            st.error("❌ 錯誤：無法取得市場資料 (DataFrame is empty)")
         else:
-            # === 唯一修改：後端直接鎖定 "CALL" ===
-            target_df = df_latest[(df_latest["contract_date"].astype(str) == sel_contract) & 
-                                  (df_latest["call_put"].str.upper() == "CALL")].copy()
+            # === 篩選資料 (已清洗過，直接比對) ===
+            target_df = df_latest[
+                (df_latest["contract_date"] == sel_contract) & 
+                (df_latest["call_put"] == "CALL")
+            ].copy()
             
-            y, m = int(sel_contract[:4]), int(sel_contract[4:6])
-            days_left = max((date(y, m, 15) - latest_date.date()).days, 1)
-            T = days_left / 365.0
-            avg_iv = 0.2
-            
-            results = []
-            for _, row in target_df.iterrows():
-                try:
-                    K = float(row["strike_price"])
-                    price = float(row["close"])
-                    vol = int(row["volume"])
-                    bs_p, delta = bs_price_delta(S_current, K, T, 0.02, avg_iv, "CALL") # 強制 CALL
-                    delta_abs = abs(delta)
-                    
-                    if safe_mode and delta_abs < 0.05: continue
-
-                    if vol > 0 and price > 0:
-                        calc_price = int(round(price, 0))
-                        status = "🟢 成交價"
-                    else:
-                        calc_price = int(round(bs_p, 0))
-                        status = "🔵 合理價"
-                    
-                    if calc_price <= 0: continue
-                    
-                    lev = (delta_abs * S_current) / calc_price
-                    win = calculate_win_rate(delta_abs, days_left)
-                    
-                    results.append({
-                        "履約價": int(K),
-                        "參考價": calc_price,
-                        "槓桿": round(lev, 2),
-                        "成交量": volume,
-                        "Delta": round(delta_abs, 2),
-                        "勝率": round(win, 0),
-                        "狀態": status,
-                        "差距": abs(lev - target_lev)
-                    })
-                except: continue
-            
-            if results:
-                results.sort(key=lambda x: x['差距'])
-                best = results[0]
-                
-                st.balloons() # 🎉
-                st.toast("🎉 找到最佳合約！", icon="🚀")
-
-                st.divider()
-                st.markdown("### 🚀 **最佳推薦合約**")
-                
-                c1, c2 = st.columns([2, 1])
-                c1.metric(f"履約價 {best['履約價']}", f"{best['參考價']} 點", f"{best['狀態']}")
-                c2.success("📈 **看漲 CALL**")
-                
-                k1, k2, k3, k4 = st.columns(4)
-                k1.metric("槓桿", f"{best['槓桿']}x")
-                k2.metric("勝率", f"{best['勝率']}%")
-                k3.metric("Delta", best['Delta'])
-                k4.metric("成交量", best['成交量'])
-                
-                st.divider()
-                
-                with st.expander("⚠️ **操作前必看：10 大高風險警示**", expanded=False):
-                    st.error("3️⃣ **資金鐵律**：1 口成本至少準備 **20倍** 本金！")
-                    st.error("6️⃣ **停損鐵律**：權利金跌 **20%** 立即平倉！")
-                    if days_left <= 30:
-                        st.toast("🚨 警告：即將到期！", icon="⚠️")
-                    
-                st.markdown("### 📋 其他候選 (僅顯示 CALL)")
-                st.dataframe(pd.DataFrame(results).head(10)[["履約價","參考價","槓桿","勝率","Delta","狀態"]], use_container_width=True)
+            # === 除錯區塊：如果找不到資料，顯示診斷訊息 ===
+            if target_df.empty:
+                st.warning(f"⚠️ 找不到合約：{sel_contract} - CALL")
+                with st.expander("🛠️ 點我查看資料庫診斷資訊"):
+                    st.write("目前選擇:", sel_contract, "CALL")
+                    st.write("資料庫中的合約列表:", df_latest["contract_date"].unique())
+                    st.write("資料庫中的方向列表:", df_latest["call_put"].unique())
+                    st.write("資料庫前5筆樣本:", df_latest.head())
             else:
-                st.warning("無符合條件合約")
+                y, m = int(sel_contract[:4]), int(sel_contract[4:6])
+                days_left = max((date(y, m, 15) - latest_date.date()).days, 1)
+                T = days_left / 365.0
+                
+                # 計算 IV
+                if 'implied_volatility' in target_df.columns:
+                    ivs = pd.to_numeric(target_df['implied_volatility'], errors='coerce').dropna()
+                    a_iv = ivs.median() if not ivs.empty else 0.2
+                else: a_iv = 0.2
+                
+                results = []
+                for _, row in target_df.iterrows():
+                    try:
+                        K = float(row["strike_price"])
+                        price = float(row["close"])
+                        vol = int(row["volume"])
+                        bs_p, delta = bs_price_delta(S_current, K, T, 0.02, a_iv, "CALL")
+                        delta_abs = abs(delta)
+                        
+                        # 過濾邏輯
+                        if safe_mode and delta_abs < 0.05: continue
+
+                        if vol > 0 and price > 0:
+                            calc_price = int(round(price, 0))
+                            status = "🟢 成交價"
+                        else:
+                            calc_price = int(round(bs_p, 0))
+                            status = "🔵 合理價"
+                        
+                        if calc_price <= 0: continue
+                        
+                        lev = (delta_abs * S_current) / calc_price
+                        win = calculate_win_rate(delta_abs, days_left)
+                        
+                        results.append({
+                            "履約價": int(K),
+                            "參考價": calc_price,
+                            "槓桿": round(lev, 2),
+                            "成交量": volume,
+                            "Delta": round(delta_abs, 2),
+                            "勝率": round(win, 0),
+                            "狀態": status,
+                            "差距": abs(lev - target_lev)
+                        })
+                    except: continue
+                
+                if results:
+                    results.sort(key=lambda x: x['差距'])
+                    best = results[0]
+                    
+                    st.balloons()
+                    st.toast("🎉 找到最佳合約！", icon="🚀")
+
+                    st.divider()
+                    st.markdown("### 🚀 **最佳推薦合約**")
+                    
+                    c1, c2 = st.columns([2, 1])
+                    c1.metric(f"履約價 {best['履約價']}", f"{best['參考價']} 點", f"{best['狀態']}")
+                    c2.success("📈 **看漲 CALL**")
+                    
+                    k1, k2, k3, k4 = st.columns(4)
+                    k1.metric("槓桿", f"{best['槓桿']}x")
+                    k2.metric("勝率", f"{best['勝率']}%")
+                    k3.metric("Delta", best['Delta'])
+                    k4.metric("成交量", best['成交量'])
+                    
+                    st.divider()
+                    
+                    with st.expander("⚠️ **操作前必看：10 大高風險警示**", expanded=False):
+                        st.error("3️⃣ **資金鐵律**：1 口成本至少準備 **20倍** 本金！")
+                        st.error("6️⃣ **停損鐵律**：權利金跌 **20%** 立即平倉！")
+                        if days_left <= 30:
+                            st.toast("🚨 警告：即將到期！", icon="⚠️")
+                        
+                    st.markdown("### 📋 其他候選 (僅顯示 CALL)")
+                    st.dataframe(pd.DataFrame(results).head(10)[["履約價","參考價","槓桿","勝率","Delta","狀態"]], use_container_width=True)
+                else:
+                    st.warning("⚠️ 篩選後無合約。請嘗試：")
+                    st.markdown("1. 關閉「🔰 穩健模式」\n2. 選擇其他月份")
 
 # ==========================================
 # 分頁 2：專業戰情室 (保留 CALL/PUT)
@@ -214,30 +239,34 @@ with tab2:
             target_cp_2 = "CALL" if "CALL" in dir_mode else "PUT"
         with c2:
             if not df_latest.empty:
-                cons = sorted(df_latest["contract_date"].astype(str).unique())
-                future_c = [c for c in cons if c.isdigit() and int(c) >= int(latest_date.strftime("%Y%m"))]
+                future_c = [c for c in sorted(df_latest["contract_date"].unique()) if c.isdigit() and int(c) >= int(latest_date.strftime("%Y%m"))]
                 sel_con_2 = st.selectbox("合約", future_c, index=len(future_c)-1 if future_c else 0, key="pro_con")
             else: sel_con_2 = ""
         with c3:
             lev_2 = st.slider("槓桿", 2.0, 15.0, 5.0, key="pro_lev")
 
         if st.button("🔥 搜尋", key="search_btn", use_container_width=True):
-            # ... (搜尋邏輯同上，保留 PUT) ...
             if not df_latest.empty:
-                tdf = df_latest[(df_latest["contract_date"].astype(str) == sel_con_2) & 
-                                (df_latest["call_put"].str.upper() == target_cp_2)].copy()
+                # 資料已清洗，直接比對
+                tdf = df_latest[(df_latest["contract_date"] == sel_con_2) & 
+                                (df_latest["call_put"] == target_cp_2)].copy()
                 
                 y, m = int(sel_con_2[:4]), int(sel_con_2[4:6])
                 dl_2 = max((date(y, m, 15) - latest_date.date()).days, 1)
                 T_2 = dl_2 / 365.0
                 
+                if 'implied_volatility' in tdf.columns:
+                    ivs = pd.to_numeric(tdf['implied_volatility'], errors='coerce').dropna()
+                    a_iv = ivs.median() if not ivs.empty else 0.2
+                else: a_iv = 0.2
+
                 res_2 = []
                 for _, row in tdf.iterrows():
                     try:
                         K = float(row["strike_price"])
                         price = float(row["close"])
                         vol = int(row["volume"])
-                        bs_p, d = bs_price_delta(S_current, K, T_2, 0.02, 0.2, target_cp_2)
+                        bs_p, d = bs_price_delta(S_current, K, T_2, 0.02, a_iv, target_cp_2)
                         d_abs = abs(d)
                         
                         if d_abs < 0.05: continue 
@@ -257,10 +286,10 @@ with tab2:
                 
                 if res_2:
                     res_2.sort(key=lambda x: x['差距'])
-                    st.session_state.search_results = res_2
                     st.session_state.best_match = res_2[0]
+                    st.session_state.search_res_pro = res_2 # 存結果
         
-        # 顯示搜尋結果與加入按鈕
+        # 顯示結果
         if 'best_match' in st.session_state and st.session_state.best_match:
             b = st.session_state.best_match
             st.success(f"🏆 推薦：{b['履約價']} {b['類型']} ({b['槓桿']}x)")
@@ -268,12 +297,14 @@ with tab2:
                 exists = any(p['履約價'] == b['履約價'] and p['合約'] == b['合約'] for p in st.session_state.portfolio)
                 if not exists: 
                     st.session_state.portfolio.append(b)
-                    st.snow() 
+                    st.snow()
                     st.toast("✅ 已加入投組", icon="❄️")
                 else:
                     st.toast("⚠️ 已在投組中")
             
-            st.dataframe(pd.DataFrame(st.session_state.search_results)[["履約價","價格","槓桿","勝率"]], use_container_width=True)
+            # 使用 session_state 中的搜尋結果
+            if 'search_res_pro' in st.session_state:
+                st.dataframe(pd.DataFrame(st.session_state.search_res_pro)[["履約價","價格","槓桿","勝率"]], use_container_width=True)
 
     # 右欄：投組
     with col_portfolio:
