@@ -1,7 +1,8 @@
 """
-🔰 台指期權雙模式系統 (教學回歸版)
-- TAB1：完整新手教學 (Lead Call、風險、名詞解釋) + 簡易操作
-- TAB2：專業戰情室 (投組管理)
+🔰 台指期權雙模式系統 (新手只做 CALL 版)
+- TAB1 簡易版：鎖定 CALL (做多)，移除做空選項，專注 Lead Call 策略。
+- TAB2 專業版：保留 CALL/PUT 切換，供進階操作。
+- 核心功能：Lead Call 搜尋、投組管理、風險監控、情緒特效。
 """
 
 import streamlit as st
@@ -70,22 +71,21 @@ with st.spinner("載入數據中..."):
 # 介面開始
 # ==========================================
 st.markdown("# 🔥 **台指期權雙模式系統**")
-tab1, tab2 = st.tabs(["🔰 **簡易新手機** (推薦)", "🔥 **專業戰情室** (投組)"])
+tab1, tab2 = st.tabs(["🔰 **簡易新手機** (只做多)", "🔥 **專業戰情室** (多空皆可)"])
 
 # ==========================================
-# 分頁 1：簡易新手機 (含完整教學)
+# 分頁 1：簡易新手機 (只做 CALL)
 # ==========================================
 with tab1:
-    # === 完整新手教學區 (Lead Call / Theta / 名詞解釋) ===
-    with st.expander("📚 **新手村：Lead Call 策略與名詞解釋（點我展開）**", expanded=False):
+    # === 新手教學區 (Lead Call 專注做多) ===
+    with st.expander("📚 **新手村：為什麼只做 CALL？（點我展開）**", expanded=False):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("""
-            ### 🐣 **基礎名詞**
-            *   **CALL (買權)** 📈：看漲。
-            *   **PUT (賣權)** 📉：看跌。
-            *   **成交價** 🟢：市場真實價格。
-            *   **合理價** 🔵：理論計算價格 (無量時參考)。
+            ### 🔰 **新手為什麼只做 CALL？**
+            *   **方向單純**：台股長期向上，**做多勝率較高**。
+            *   **風險有限**：買方最大虧損 = 權利金 (不會爆倉)。
+            *   **心態健康**：像買股票一樣長期持有，不會被軋空。
             
             ### 🚀 **Lead Call 長期策略**
             1.  **買進**：選 **遠月 (季月)**，剩餘 >90 天。
@@ -100,7 +100,6 @@ with tab1:
                 "動作": ["安心持有", "獲利了結", "強制平倉"]
             }
             st.dataframe(pd.DataFrame(risk_data), use_container_width=True)
-            st.info("💡 **核心觀念**：遠月合約像股票，近月合約像樂透。新手請選遠月！")
 
     m1, m2 = st.columns(2)
     m1.metric("📈 加權指數", f"{S_current:,.0f}")
@@ -111,8 +110,10 @@ with tab1:
 
     with c1:
         st.markdown("### 1️⃣ 方向")
-        direction = st.radio("預測", ["CALL 📈", "PUT 📉"], horizontal=True, label_visibility="collapsed")
-        target_cp = "CALL" if "CALL" in direction else "PUT"
+        # === 關鍵修改：鎖定 CALL，移除選項 ===
+        st.success("📈 **看漲 (CALL)**")
+        st.caption("新手專用，鎖定做多")
+        target_cp = "CALL" 
 
     with c2:
         st.markdown("### 2️⃣ 月份 (預設遠月)")
@@ -132,12 +133,13 @@ with tab1:
         st.markdown("### 4️⃣ 篩選")
         safe_mode = st.checkbox("🔰 穩健模式", value=True, help="僅過濾極度價外 (Delta < 0.05)")
 
-    if st.button("🎯 **尋找最佳合約**", type="primary", use_container_width=True):
+    if st.button("🎯 **尋找最佳 CALL 合約**", type="primary", use_container_width=True):
         if df_latest.empty:
             st.error("無資料")
         else:
+            # 強制鎖定 CALL
             target_df = df_latest[(df_latest["contract_date"].astype(str) == sel_contract) & 
-                                  (df_latest["call_put"].str.upper() == target_cp)].copy()
+                                  (df_latest["call_put"].str.upper() == "CALL")].copy()
             
             y, m = int(sel_contract[:4]), int(sel_contract[4:6])
             days_left = max((date(y, m, 15) - latest_date.date()).days, 1)
@@ -154,7 +156,7 @@ with tab1:
                     K = float(row["strike_price"])
                     price = float(row["close"])
                     vol = int(row["volume"])
-                    bs_p, delta = bs_price_delta(S_current, K, T, 0.02, a_iv, target_cp)
+                    bs_p, delta = bs_price_delta(S_current, K, T, 0.02, a_iv, "CALL") # 強制 CALL
                     delta_abs = abs(delta)
                     
                     if safe_mode and delta_abs < 0.05: continue
@@ -175,7 +177,7 @@ with tab1:
                         "履約價": int(K),
                         "參考價": calc_price,
                         "槓桿": round(lev, 2),
-                        "成交量": vol,
+                        "成交量": volume,
                         "Delta": round(delta_abs, 2),
                         "勝率": round(win, 0),
                         "狀態": status,
@@ -189,14 +191,14 @@ with tab1:
                 st.session_state.search_res_easy = results
                 
                 st.balloons() # 🎉
-                st.toast("🎉 找到最佳合約！", icon="🚀")
+                st.toast("🎉 找到最佳 CALL 合約！", icon="🚀")
 
                 st.divider()
                 st.markdown("### 🚀 **最佳推薦合約**")
                 
                 c1, c2 = st.columns([2, 1])
                 c1.metric(f"履約價 {best['履約價']}", f"{best['參考價']} 點", f"{best['狀態']}")
-                c2.success(f"{target_cp} 看{'漲' if target_cp=='CALL' else '跌'}")
+                c2.success("📈 **看漲 CALL** (長期持有)")
                 
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("槓桿", f"{best['槓桿']}x")
@@ -214,22 +216,23 @@ with tab1:
                     if days_left <= 30:
                         st.toast("🚨 警告：即將到期！", icon="⚠️")
                     
-                st.markdown("### 📋 其他候選")
+                st.markdown("### 📋 其他候選 (僅顯示 CALL)")
                 st.dataframe(pd.DataFrame(results).head(10)[["履約價","參考價","槓桿","勝率","Delta","狀態"]], use_container_width=True)
             else:
                 st.warning("無符合條件合約")
 
 # ==========================================
-# 分頁 2：專業戰情室 (投組管理)
+# 分頁 2：專業戰情室 (多空皆可)
 # ==========================================
 with tab2:
     col_search, col_portfolio = st.columns([1.2, 0.8])
     
     # 左欄：搜尋
     with col_search:
-        st.markdown("### 1️⃣ 合約搜尋")
+        st.markdown("### 1️⃣ 合約搜尋 (進階)")
         c1, c2, c3 = st.columns(3)
         with c1:
+            # === 專業版保留 PUT ===
             dir_mode = st.selectbox("方向", ["CALL 📈", "PUT 📉"], key="pro_dir")
             target_cp_2 = "CALL" if "CALL" in dir_mode else "PUT"
         with c2:
