@@ -272,52 +272,54 @@ with col4:
 st.markdown("---")
 
 # 合規聲明
-# 合規聲明（放在 app 最上方）
+# 合規聲明（零基礎新手版，CALL獵人改半年以上）
 if not st.session_state.get('disclaimer_accepted', False):
-    st.warning("🚨 **重要聲明**：本工具僅供教育，非投資建議。新手請先閱讀「穩健ETF」章節。")
+    st.error("🚨 **股票完全新手必讀！**")
+    st.markdown("""
+    **先搞懂股票基礎：**
+    - 💹 **股票** = 買公司股份，股價漲才賺錢
+    - 📈 **ETF** = 一籃子優質股票，新手首選  
+    - 💳 **定期定額** = 每月固定買，避開追高殺低
+    """)
     
-    # 加大 + 特效的主按鈕
     st.markdown("---")
-    if st.button(
-        "🎉 **✅ 我了解，開始使用** 🎉", 
-        type="primary", 
-        use_container_width=True,
-        help="點擊進入貝伊果屋投資工具"
-    ):
+    
+    # 完整5大功能分級
+    st.markdown("## 🎯 **貝伊果屋5大功能**")
+    
+    st.markdown("""
+    **🌱 新手起手（先練這3個）**
+    - **Tab0 定投計畫**：設定每月自動買ETF，複利致富
+    - **Tab1 智能情報**：看懂台股熱門 + 大盤趨勢  
+    - **Tab4 戰情室**：追蹤市場熱門題材（AI、半導體）
+    
+    **🚀 中級看多（看好中長期）**
+    - **Tab2 CALL獵人**：找**半年以上到期CALL**（低成本槓桿看多個股)
+    
+    **🧠 高手專用（會寫策略）**
+    - **Tab3 回測系統**：驗證策略過去10年績效
+    """)
+    
+    st.markdown("---")
+    
+    # 確認按鈕
+    if st.button("✅ **我懂基礎，開始使用**", type="primary", use_container_width=True):
         st.session_state.disclaimer_accepted = True
-        st.balloons()  # 慶祝特效
-        st.success("歡迎來到貝伊果屋！")
+        st.balloons()
         st.rerun()
     
     st.markdown("---")
     
-    # 推薦書籍在按鈕下方
-    st.markdown("##  🔥**強烈建議**🔥")
-    st.markdown("##  **閱讀下列2本書後!**")
-    st.markdown("##  **才開始投資旅程!**")
-
+    st.markdown("### 📚 **零基礎必備書籍**")
     col1, col2 = st.columns(2)
     with col1:
-        st.image("https://down-tw.img.susercontent.com/file/sg-11134201-7qvdl-lh2v8yc9n8530d.webp", caption="持續買進: 資料科學家的投資終極解答, 存錢及致富的實證方法", use_container_width=True)
-        st.markdown("[🛒 購買『 持續買進 』](https://s.shopee.tw/5AmrxVrig8)")
+        st.image("https://down-tw.img.susercontent.com/file/sg-11134201-7qvdl-lh2v8yc9n8530d.webp", caption="方案一", use_container_width=True)
+        st.markdown("[🛒 購買方案一](https://s.shopee.tw/5AmrxVrig8)")
     with col2:
-        st.image("https://down-tw.img.susercontent.com/file/tw-11134207-7rasc-m2ba9wueqaze3a.webp", caption="長期買進：財金教授周冠男的42堂自制力投資課二", use_container_width=True)
-        st.markdown("[🛒 購買『 長期買進 』](https://s.shopee.tw/6KypLiCjuy)")
+        st.image("https://down-tw.img.susercontent.com/file/tw-11134207-7rasc-m2ba9wueqaze3a.webp", caption="方案二", use_container_width=True)
+        st.markdown("[🛒 購買方案二](https://s.shopee.tw/6KypLiCjuy)")
     
     st.stop()
-
-# 原側邊欄內容
-with st.sidebar:
-    st.markdown("## 🥯 **貝伊果屋**")
-    st.image("https://via.placeholder.com/300x100?text=BeiGuoWu", use_container_width=True)
-    
-    if st.session_state.get('is_pro', False):
-        st.success("👑 Pro 會員")
-    
-    st.divider()
-    st.caption("📊 功能導航：\n• Tab0: 定投計畫\n• Tab1: 智能情報\n• Tab2: CALL獵人\n• Tab3: 回測系統\n• Tab4: 戰情室")
-
-
 
 # 分頁導航
 tab_names = [
@@ -1310,4 +1312,3 @@ with tabs[10]: st.info("🚧 擴充功能 7：自定義策略腳本 (開發中)"
 with tabs[11]: st.info("🚧 擴充功能 8：社群討論區 (開發中)")
 with tabs[12]: st.info("🚧 擴充功能 9：課程學習中心 (開發中)")
 with tabs[13]: st.info("🚧 擴充功能 10：VIP 專屬通道 (開發中)")
-
