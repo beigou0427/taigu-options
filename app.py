@@ -1497,12 +1497,11 @@ with tabs[4]:
 # --------------------------
 # Tab 5
 # --------------------------
-# ======================================================
-# Tab 5: 全景產業鏈 AI 分析版 (v6.7)
-# 整合 FinMind 智能辨識 + 自動推導上下游 + 50家媒體隨機抽樣
-# 直接貼入 with tabs[5]: 即可運行
-# ======================================================
-with tabs[5]:
+# 只替換你的 with tabs[5]: 整個區塊（其他 tabs 不動）
+if "in_tab5" not in st.session_state:
+    st.session_state.in_tab5 = True
+
+if st.session_state.in_tab5:
     st.markdown("""
     <div style='text-align:center; padding:20px; 
     background:linear-gradient(135deg, #141E30 0%, #243B55 100%); 
@@ -1591,6 +1590,8 @@ with tabs[5]:
         # 3️⃣ 【收集新聞】
         raw_news_pool = []
         collected_sources = set()
+        import feedparser
+        import time
         
         for media_name, rss_url in selected_feeds.items():
             try:
@@ -1656,6 +1657,7 @@ with tabs[5]:
         status.info(f"🦙 正在自動推導 {stock_name} 上下游產業鏈並進行分析...")
         
         # 🦙 Groq 分析
+        groq_analysis = None
         try:
             from groq import Groq
             import httpx
@@ -1676,7 +1678,6 @@ with tabs[5]:
             st.success(f"✅ 報告生成完畢（核心標的：{display_title} | 產業：{industry}）")
         except Exception as e:
             st.error("🦙 AI 引擎暫時無法連線")
-            groq_analysis = None
         
         prog.progress(100)
         status.empty()
