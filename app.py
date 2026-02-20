@@ -435,111 +435,151 @@ if not st.session_state.get('disclaimer_accepted', False):
     st.stop()
 
 # =========================================
-# 替換整個 Tabs 區塊 (從 tab_names 到所有 with tabs:)
+# =========================================
+# 🥯 貝伊果屋導航系統 v1.0 (取代所有 tabs)
 # =========================================
 
-# 🔒 Radio 導航 (取代 tabs，永不跳轉)
-st.markdown("## 🥯 **貝伊果屋雙軌系統**")
-radio_options = ["🐢 ETF 定投", "📊 大盤情報", "🔥 CALL獵人", "⚙️ 回測系統", 
-                "🎯 戰情室", "🔗 AI產業鏈"]
-
-# 永久記憶當前頁面
+# 📱 永久記憶導航位置
 if "current_page" not in st.session_state:
-    st.session_state.current_page = "🐢 ETF 定投"
+    st.session_state.current_page = 0
 
-selected_page = st.radio(
-    "導航選單", 
-    radio_options,
-    index=radio_options.index(st.session_state.current_page),
-    key="main_radio",
-    horizontal=True,
-    label_visibility="collapsed"
-)
-
-st.session_state.current_page = selected_page
-
-# CSS 美化 radio (模擬 tabs 外觀)
+# 🎨 美化導航列
 st.markdown("""
 <style>
-div[data-testid="stRadio"] > label > div:first-child {
-    display: none !important;
-}
+/* Radio 變 Tabs 美化 */
+div[data-testid="stRadio"] > label > div[data-testid="stMarkdownContainer"] { display: none !important; }
 div[data-testid="stRadio"] > label {
     background: linear-gradient(135deg, #2c3e50, #34495e) !important;
-    border-radius: 12px !important;
-    padding: 12px 20px !important;
-    margin: 4px !important;
-    color: white !important;
-    border: 2px solid #4ECDC4 !important;
-    transition: all 0.3s !important;
+    border-radius: 12px !important; padding: 12px 24px !important; margin: 5px !important;
+    color: white !important; border: 2px solid #bdc3c7 !important; font-weight: 500 !important;
+    transition: all 0.3s ease !important; font-size: 15px !important;
 }
 div[data-testid="stRadio"] > label:hover {
-    background: linear-gradient(135deg, #4ECDC4, #45B7D1) !important;
-    transform: translateY(-2px) !important;
-    box-shadow: 0 8px 25px rgba(78,205,196,0.4) !important;
+    background: linear-gradient(135deg, #3498db, #2980b9) !important;
+    border-color: #3498db !important; transform: translateY(-3px) !important;
+    box-shadow: 0 10px 30px rgba(52,152,219,0.4) !important;
 }
-div[role="radio"]:has(input:checked) + label {
-    background: linear-gradient(135deg, #4ECDC4, #45B7D1) !important;
-    border-color: #2c3e50 !important;
-    box-shadow: 0 0 0 3px rgba(78,205,196,0.5) !important;
+div[role="radio"]:has(input:checked) ~ label {
+    background: linear-gradient(135deg, #27ae60, #2ecc71) !important;
+    border-color: #27ae60 !important; box-shadow: 0 0 0 4px rgba(39,174,96,0.3) !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# 分頁內容 (根據 selected_page 顯示)
-if selected_page == "🐢 ETF 定投":
-    st.markdown("### 🐢 **你的 ETF 定投程式碼**")
-    # ... 原 Tab 0 內容 ...
+# 📋 6 大功能導航
+page_names = [
+    "🐢 ETF 定投",      # 原 Tab 0
+    "📊 大盤情報",      # 原 Tab 1  
+    "🔥 CALL獵人",      # 原 Tab 2
+    "⚙️ 回測系統",      # 原 Tab 3
+    "🎯 戰情室",        # 原 Tab 4
+    "🔗 AI產業鏈"       # 原 Tab 5
+]
+
+selected_page_idx = st.radio(
+    "貝伊果屋雙軌系統",
+    range(len(page_names)),
+    index=st.session_state.current_page,
+    key="master_radio",
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+st.session_state.current_page = selected_page_idx
+
+# =========================================
+# 各頁面內容 (對應原 tabs[index])
+# =========================================
+if selected_page_idx == 0:
+    st.markdown("### 🐢 **ETF 定投**")
+    # 👇 貼你的原 tabs[0] 內容
+    # with tabs[0]: 的所有程式碼貼這裡
+
+elif selected_page_idx == 1:
+    st.markdown("### 📊 **大盤情報**") 
+    # 👇 貼你的原 tabs[1] 內容
+
+elif selected_page_idx == 2:
+    st.markdown("### 🔥 **CALL獵人**")
+    # 👇 貼你的原 tabs[2] 內容
+
+elif selected_page_idx == 3:
+    st.markdown("### ⚙️ **回測系統**")
+    # 👇 貼你的原 tabs[3] 內容
+
+elif selected_page_idx == 4:
+    st.markdown("### 🎯 **戰情室**")
+    # 👇 貼你的原 tabs[4] 內容
+
+elif selected_page_idx == 5:
+    st.markdown("### 🔗 **AI產業鏈分析** (永不跳轉！)")
     
-elif selected_page == "📊 大盤情報":
-    st.markdown("### 📊 **你的大盤程式碼**")
-    # ... 原 Tab 1 內容 ...
-
-elif selected_page == "🔥 CALL獵人":
-    st.markdown("### 🔥 **你的 CALL獵人程式碼**")
-    # ... 原 Tab 2 內容 ...
-
-elif selected_page == "⚙️ 回測系統":
-    st.markdown("### ⚙️ **你的回測程式碼**")
-    # ... 原 Tab 3 內容 ...
-
-elif selected_page == "🎯 戰情室":
-    st.markdown("### 🎯 **你的戰情室程式碼**")
-    # ... 原 Tab 4 內容 ...
-
-elif selected_page == "🔗 AI產業鏈":
-    st.markdown("### 🔗 **AI產業鏈分析 (永不跳轉！)**")
+    # 🔒 狀態管理
+    if "ai_running" not in st.session_state:
+        st.session_state.ai_running = False
+    if "ai_result" not in st.session_state:
+        st.session_state.ai_result = None
     
-    # 🔒 鎖定狀態
-    col_lock_status, col_unlock = st.columns([3, 1])
-    col_lock_status.success("✅ **Radio 模式：絕對不跳**")
-    
-    # 產業鏈完整程式碼 (複製貼上你的原邏輯)
     col1, col2 = st.columns([2, 1])
-    stock_code = col1.text_input("🏭 股票代碼", "2330")
+    stock_code = col1.text_input("🏭 指標股", "2330")
     days = col2.selectbox("天數", [7, 14, 30])
     
-    if st.button("🚀 **啟動分析**", type="primary"):
-        with st.spinner("🔍 產業鏈分析中..."):
-            # 你的原分析邏輯
+    col_btn1, col_btn2 = st.columns([3, 1])
+    with col_btn1:
+        if st.button("🚀 **啟動分析**", type="primary", disabled=st.session_state.ai_running):
+            st.session_state.ai_running = True
+    
+    if st.session_state.ai_running:
+        st.markdown("""
+        <div style='height:250px; background:linear-gradient(90deg,#667eea,#764ba2); 
+        border-radius:20px; display:flex; align-items:center; justify-content:center; color:white;'>
+            <div style='text-align:center;'>
+                <div style='font-size:32px;'>🔍 分析中...</div>
+                <div class='loader' style='border:10px solid rgba(255,255,255,0.3); 
+                border-top:10px solid white; border-radius:50%; width:60px; height:60px; 
+                margin:20px auto; animation:spin 1s linear infinite;'></div>
+                <div>FinMind → RSS → AI 推導</div>
+            </div>
+            <style>@keyframes spin{{0%{{transform:rotate(0deg);}}100%{{transform:rotate(360deg);}}}}</style>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        try:
             dl = DataLoader()
             dl.login_by_token(api_token=FINMIND_TOKEN)
             df = dl.taiwan_stock_info()
-            row = df[df['stock_id'] == stock_code]
+            row = df[df['stock_id']==stock_code]
             
             if not row.empty:
                 name = row['stock_name'].iloc[0]
                 industry = row['industry_category'].iloc[0]
                 
-                st.success(f"✅ **{stock_code} {name}** ({industry})")
-                st.markdown(f"""
-                **🎯 定位**：{industry}核心企業
-                **⬆️ 上游**：設備/材料供應商
-                **⬇️ 下游**：Nvidia/Apple/AMD
-                **📊 風向**：AI需求強勁
-                """)
+                st.session_state.ai_result = f"""
+                **✅ {stock_code} {name}** ({industry})
+                🎯 定位：產業核心供應鏈
+                ⬆️ 上游：設備/材料供應商  
+                ⬇️ 下游：Nvidia/Apple/AMD
+                📊 風向：AI需求強勁
+                """
+                st.session_state.ai_running = False
             else:
-                st.warning("查無此股票")
+                st.session_state.ai_running = False
+                st.warning("查無股票")
+                
+        except Exception as e:
+            st.session_state.ai_running = False
+            st.error(f"錯誤：{e}")
+    
+    if st.session_state.ai_result:
+        st.markdown(f"""
+        <div style='background:rgba(15,20,25,0.95); padding:25px; border-radius:18px; 
+        border-left:5px solid #27ae60; color:white;'>
+            {st.session_state.ai_result}
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.caption("🔒 Radio 永久記憶 | 絕不跳轉")
+
 
 # --------------------------
 # Tab 0: 穩健 ETF (v8.2 - 雙源穩定版)
@@ -1795,6 +1835,7 @@ with tabs[5]:
     
     st.markdown("---")
     st.caption("🔒 **終極鎖定版**：狀態初始化 + 三重鎖定 + 純 CSS 載入 | 永不跳轉")
+
 
 
 
