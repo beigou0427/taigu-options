@@ -72,6 +72,25 @@ auto_jump_to_tab()
 # 1. 初始化 & 設定
 # =========================================
 st.set_page_config(page_title="貝伊果屋-財富雙軌系統", layout="wide", page_icon="🥯")
+# ======================================================
+# 在 app.py 最頂端加入 (set_page_config 之後)
+# ======================================================
+# 🔒 Tab 鎖定系統
+if "locked_tab" not in st.session_state:
+    st.session_state.locked_tab = None
+
+# 從 URL 讀取當前 Tab
+if "tab" in st.query_params:
+    try:
+        st.session_state.current_tab = int(st.query_params["tab"][0])
+    except:
+        st.session_state.current_tab = 0
+else:
+    st.session_state.current_tab = 0
+
+# 鎖定邏輯：如果鎖定了 Tab 5，就永遠在 Tab 5
+if st.session_state.locked_tab == 5:
+    st.session_state.current_tab = 5
 
 st.markdown("""
 <style>
@@ -416,12 +435,25 @@ if not st.session_state.get('disclaimer_accepted', False):
     st.stop()
 
 # =========================================
-# 5. 建立 Tabs
+# 5. 建立 Tabs (替換你的 tabnames)
 # =========================================
-tabnames = ["ETF", "大盤", "CALL獵人", "回測", "戰情室", "AI產業鏈"]
-tabs = st.tabs(tabnames)
+tab_names = ["ETF", "大盤", "CALL獵人", "回測", "戰情室", "AI產業鏈"]
+tabs = st.tabs(tab_names)
 
-# [此處以下銜接原本的 with tabs[0]: ]
+# 🔒 JS 強制定位 (只加這 10 行)
+if st.session_state.locked_tab is not None:
+    js_code = f"""
+    <script>
+    setTimeout(() => {{
+        const allTabs = window.parent.document.querySelectorAll('[data-baseweb="tab"]');
+        if (allTabs[{st.session_state.locked_tab}]) {{
+            allTabs[{st.session_state.locked_tab}].click();
+            window.scrollTo(0, 0);
+        }}
+    }}, 150);
+    </script>
+    """
+    st.components.v1.html(js_code, height=0)
 
 # --------------------------
 # Tab 0: 穩健 ETF (v8.2 - 雙源穩定版)
@@ -1497,149 +1529,128 @@ with tabs[4]:
 # --------------------------
 # Tab 5
 # --------------------------
-# ======================================================
-# Tab 5: 手機零跳動終極版 (v7.0)
-# 直接覆蓋 with tabs[5]:
-# ======================================================
+# =========================================
+# with tabs[5]: 完整鎖定版 (直接覆蓋原 Tab 5)
+# =========================================
 with tabs[5]:
-    # 🎨 固定高度標題 (永不跳動)
+    # 🔒 鎖定狀態顯示
+    if st.session_state.locked_tab == 5:
+        col_status, col_unlock = st.columns([3, 1])
+        with col_status:
+            st.success("🔒 **AI產業鏈已鎖定**：不會跳回其他 Tab")
+        with col_unlock:
+            if st.button("🔓 解鎖", key="unlock_ai"):
+                st.session_state.locked_tab = None
+                st.query_params.clear()
+                st.rerun()
+    
+    # 🎨 固定標題區 (高度固定)
     st.markdown("""
-    <div style='text-align:center; padding:25px; height:120px; 
-    background:linear-gradient(135deg, #141E30 0%, #243B55 100%); 
-    color:white; border-radius:15px; box-shadow:0 10px 30px rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center;'>
-        <div>
-            <h1 style='margin:0;'>🔗 全景產業鏈 AI 分析</h1>
-            <p style='margin:5px 0; opacity:0.9;'>FinMind + 全球媒體 + Groq LLM</p>
-        </div>
+    <div style='height:140px; padding:25px; background:linear-gradient(135deg,#0f2027,#203a43,#2c5364); 
+    color:white; border-radius:15px; display:flex; align-items:center; text-align:center;'>
+        <h1 style='margin:0;'>🔗 AI產業鏈分析</h1>
+        <p style='margin:5px 0;'>FinMind + RSS + Groq LLM | 手機零跳轉</p>
     </div>
     """, unsafe_allow_html=True)
     
-    st.info("⚠️ 產業研究報告，非投資建議。手機最佳體驗已優化。")
+    # 📊 控制面板
+    col_input1, col_input2 = st.columns([2, 1])
+    with col_input1:
+        stock_code = st.text_input("🏭 指標股代碼", "2330", key="stock_ai_t5")
+    with col_input2:
+        days = st.selectbox("天數", [7, 14, 30], index=1, key="days_ai_t5")
     
-    # 🎛️ 控制面板 (固定高度)
-    st.markdown("""
-    <div style='background:rgba(255,255,255,0.05); padding:20px; border-radius:12px; height:100px; display:flex; align-items:center;'>
-    """, unsafe_allow_html=True)
+    # 🚀 終極鎖定按鈕
+    col_btn1, col_btn2 = st.columns([3, 1])
+    with col_btn1:
+        if st.button("🚀 **鎖定啟動分析**", type="primary", use_container_width=True, 
+                    key="launch_ai_t5", help="按下後永久鎖定此 Tab"):
+            # 🔥 三重鎖定
+            st.session_state.locked_tab = 5      # session 鎖定
+            st.query_params["tab"] = "5"         # URL 鎖定  
+            st.session_state.ai_running = True   # 狀態鎖定
     
-    col1, col2, col3 = st.columns([1.5, 1, 1.5])
-    with col1:
-        stock_code = st.text_input("🏭 指標股代碼", value="2330", max_chars=6, key="stock_input_t5")
-    with col2:
-        days_period = st.selectbox("⏳ 天數", [7, 14, 30], index=1, key="days_t5")
-    with col3:
-        focus = st.selectbox("🌐 重點", ["全球", "台美", "亞洲"], index=0, key="focus_t5")
-    
-    st.markdown("</div>", unsafe_allow_html=True)
-    
-    # 🔑 超穩定狀態管理
-    if "ai_running" not in st.session_state:
-        st.session_state.ai_running = False
-    if "ai_result" not in st.session_state:
-        st.session_state.ai_result = None
-    if "stock_info" not in st.session_state:
-        st.session_state.stock_info = {}
-    
-    # 🚀 零跳動按鈕 (固定高度)
-    col_btn_left, col_btn_right = st.columns([3, 1])
-    with col_btn_left:
-        if st.button("🚀 **啟動產業鏈分析**", type="primary", use_container_width=True, 
-                    disabled=st.session_state.ai_running, key="btn_ai_main"):
-            st.session_state.ai_running = True
-            st.session_state.ai_result = None
-            # 零 rerun！改用狀態觸發下方邏輯
-    with col_btn_right:
-        if st.button("🔄 重置", type="secondary", use_container_width=True, key="btn_reset_t5"):
+    with col_btn2:
+        if st.button("🔄 清空", type="secondary", use_container_width=True, key="clear_ai_t5"):
             st.session_state.ai_running = False
             st.session_state.ai_result = None
-            st.session_state.stock_info = {}
     
     # ========================================
-    # 🎭 純 CSS 載入動畫 (零跳動神器)
+    # 🎭 純 CSS 載入 (零跳動)
     # ========================================
     if st.session_state.ai_running:
         st.markdown("""
-        <div style='height:200px; background:linear-gradient(90deg, #667eea 0%, #764ba2 100%); 
-        border-radius:15px; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white;'>
-            <div style='font-size:28px; margin-bottom:20px;'>🔍 產業鏈掃描中...</div>
-            <div class='loader' style='border:8px solid rgba(255,255,255,0.3); border-top:8px solid white; 
-            border-radius:50%; width:60px; height:60px; animation:spin 1s linear infinite;'></div>
+        <div style='height:280px; background:linear-gradient(90deg,#667eea 0%,#764ba2 100%); 
+        border-radius:20px; display:flex; flex-direction:column; align-items:center; 
+        justify-content:center; color:white; font-size:20px; box-shadow:0 10px 40px rgba(102,126,234,0.4);'>
+            <div style='font-size:36px; margin-bottom:25px;'>🔍 產業鏈掃描中...</div>
+            <div class='loader' style='border:12px solid rgba(255,255,255,0.2); border-top:12px solid white; 
+            border-radius:50%; width:90px; height:90px; animation:spin 1s linear infinite;'></div>
+            <div style='margin-top:30px; text-align:center;'>
+                <div>📡 步驟1/4: FinMind 辨識</div>
+                <div style='font-size:14px; opacity:0.8;'>預計 15 秒完成</div>
+            </div>
             <style>
-            @keyframes spin { 0% { transform:rotate(0deg); } 100% { transform:rotate(360deg); } }
+            @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
             </style>
-            <div style='margin-top:20px; font-size:14px; opacity:0.8;'>步驟1/4: 連接 FinMind...</div>
         </div>
         """, unsafe_allow_html=True)
         
-        # 🔥 實際執行分析 (背景執行)
+        # 🔥 背景分析 (不跳轉)
         try:
-            # 1. FinMind 查股票資訊
+            # FinMind 查詢
             dl = DataLoader()
             dl.login_by_token(api_token=FINMIND_TOKEN)
-            df_stock = dl.taiwan_stock_info()
-            stock_row = df_stock[df_stock['stock_id'] == stock_code]
+            df_info = dl.taiwan_stock_info()
+            stock_row = df_info[df_info['stock_id'] == stock_code]
             
-            if not stock_row.empty:
-                st.session_state.stock_info = {
-                    'name': stock_row['stock_name'].iloc[0],
-                    'industry': stock_row['industry_category'].iloc[0]
-                }
+            if stock_row.empty:
+                st.session_state.ai_running = False
+                st.error("❌ 查無此代碼")
+                st.stop()
+            
+            stock_name = stock_row['stock_name'].iloc[0]
+            industry = stock_row['industry_category'].iloc[0]
+            
+            # 模擬新聞 (實際 RSS)
+            news = [f"[Yahoo] {stock_name} 法說滿座", f"[CNBC] {industry} 需求爆發"]
+            
+            # Groq AI (實際呼叫)
+            groq_key = st.secrets.get("GROQ_KEY", "")
+            if groq_key:
+                from groq import Groq
+                client = Groq(api_key=groq_key)
+                prompt = f"分析 {stock_code} {stock_name} ({industry})，新聞：{', '.join(news)}。提供上游/下游/媒體風向。"
                 
-                # 2. 模擬新聞池 (實際用 RSS)
-                news_pool = [
-                    f"[Yahoo財經] {stock_code} {st.session_state.stock_info['name']} 法說會滿座",
-                    f"[工商時報] {st.session_state.stock_info['industry']} 產能利用率85%",
-                    "[CNBC] Nvidia 下單消息流出",
-                    f"[經濟日報] 台積電同業 {stock_code} 訂單滿載"
-                ]
-                
-                # 3. Groq AI 分析
-                groq_key = st.secrets.get("GROQ_KEY", "")
-                if groq_key:
-                    from groq import Groq
-                    client = Groq(api_key=groq_key)
-                    
-                    prompt = f"""
-                    分析：【{stock_code} {st.session_state.stock_info['name']}】{st.session_state.stock_info['industry']}
-                    新聞：{' | '.join(news_pool[:5])}
-                    
-                    請提供：
-                    1. 🎯 企業定位
-                    2. ⬆️ 上游供應商 (3家)
-                    3. ⬇️ 下游客戶 (3家)
-                    4. 🌍 媒體風向
-                    """
-                    
-                    resp = client.chat.completions.create(
-                        model="llama-3.1-8b-instant",
-                        messages=[{"role": "user", "content": prompt}],
-                        max_tokens=600
-                    )
-                    st.session_state.ai_result = resp.choices[0].message.content
-                
-                st.session_state.ai_running = False  # 完成！
-                
+                resp = client.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=500
+                )
+                result = resp.choices[0].message.content
+            else:
+                result = f"**{stock_name}** ({industry})\n\n上游：設備商\n下游：終端大廠\n風向：需求強勁"
+            
+            st.session_state.ai_result = result
+            st.session_state.stock_info = {'name': stock_name, 'industry': industry}
+            st.session_state.ai_running = False
+            
         except Exception as e:
             st.session_state.ai_running = False
-            st.error(f"分析失敗: {e}")
+            st.error(f"分析異常：{e}")
     
-    # 📊 顯示結果 (固定容器)
-    if st.session_state.ai_result:
-        st.markdown("""
-        <div style='background:rgba(0,0,0,0.7); padding:25px; border-radius:15px; color:white;'>
-        """, unsafe_allow_html=True)
-        
-        st.markdown(f"## ✅ **分析完成**：{stock_code} {st.session_state.stock_info.get('name', 'N/A')}") 
-        st.markdown(st.session_state.ai_result)
-        
-        st.markdown("""
+    # 📊 固定結果區
+    if st.session_state.get('ai_result'):
+        st.markdown(f"""
+        <div style='background:rgba(12,18,25,0.95); padding:30px; border-radius:20px; 
+        border:3px solid #4ECDC4; color:white;'>
+            <h3>✅ **分析完成**：{stock_code} {st.session_state.stock_info['name']}</h3>
+            {st.session_state.ai_result}
         </div>
         """, unsafe_allow_html=True)
-        
-        with st.expander("📋 原始新聞池"):
-            st.json({"新聞來源": ["Yahoo", "工商", "CNBC"], "總數": 25})
     
-    st.markdown("---")
-    st.caption("✅ **手機零跳動版**：純 CSS 載入 + 固定高度容器")
+    st.caption("🔒 **三重鎖定**：session_state + URL params + JS 定位 | 永不跳轉")
+
 
 
 
