@@ -435,39 +435,111 @@ if not st.session_state.get('disclaimer_accepted', False):
     st.stop()
 
 # =========================================
-# 完整 Tabs + Tab 5 鎖定版 (直接複製貼上)
+# 替換整個 Tabs 區塊 (從 tab_names 到所有 with tabs:)
 # =========================================
 
-# 🔒 狀態初始化 (放在 set_page_config 之後、全域有效)
-if "ai_running" not in st.session_state:
-    st.session_state.ai_running = False
-if "ai_result" not in st.session_state:
-    st.session_state.ai_result = None
-if "stock_info" not in st.session_state:
-    st.session_state.stock_info = {}
-if "locked_tab" not in st.session_state:
-    st.session_state.locked_tab = None
+# 🔒 Radio 導航 (取代 tabs，永不跳轉)
+st.markdown("## 🥯 **貝伊果屋雙軌系統**")
+radio_options = ["🐢 ETF 定投", "📊 大盤情報", "🔥 CALL獵人", "⚙️ 回測系統", 
+                "🎯 戰情室", "🔗 AI產業鏈"]
 
-# =========================================
-# 5. 建立 Tabs
-# =========================================
-tab_names = ["ETF", "大盤", "CALL獵人", "回測", "戰情室", "AI產業鏈"]
-tabs = st.tabs(tab_names)
+# 永久記憶當前頁面
+if "current_page" not in st.session_state:
+    st.session_state.current_page = "🐢 ETF 定投"
 
-# 🔒 JS 強制定位
-if st.session_state.locked_tab is not None:
-    js_code = f"""
-    <script>
-    setTimeout(() => {{
-        const allTabs = window.parent.document.querySelectorAll('[data-baseweb="tab"]');
-        if (allTabs[{st.session_state.locked_tab}]) {{
-            allTabs[{st.session_state.locked_tab}].click();
-            window.scrollTo(0, 0);
-        }}
-    }}, 150);
-    </script>
-    """
-    st.components.v1.html(js_code, height=0)
+selected_page = st.radio(
+    "導航選單", 
+    radio_options,
+    index=radio_options.index(st.session_state.current_page),
+    key="main_radio",
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+st.session_state.current_page = selected_page
+
+# CSS 美化 radio (模擬 tabs 外觀)
+st.markdown("""
+<style>
+div[data-testid="stRadio"] > label > div:first-child {
+    display: none !important;
+}
+div[data-testid="stRadio"] > label {
+    background: linear-gradient(135deg, #2c3e50, #34495e) !important;
+    border-radius: 12px !important;
+    padding: 12px 20px !important;
+    margin: 4px !important;
+    color: white !important;
+    border: 2px solid #4ECDC4 !important;
+    transition: all 0.3s !important;
+}
+div[data-testid="stRadio"] > label:hover {
+    background: linear-gradient(135deg, #4ECDC4, #45B7D1) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 25px rgba(78,205,196,0.4) !important;
+}
+div[role="radio"]:has(input:checked) + label {
+    background: linear-gradient(135deg, #4ECDC4, #45B7D1) !important;
+    border-color: #2c3e50 !important;
+    box-shadow: 0 0 0 3px rgba(78,205,196,0.5) !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# 分頁內容 (根據 selected_page 顯示)
+if selected_page == "🐢 ETF 定投":
+    st.markdown("### 🐢 **你的 ETF 定投程式碼**")
+    # ... 原 Tab 0 內容 ...
+    
+elif selected_page == "📊 大盤情報":
+    st.markdown("### 📊 **你的大盤程式碼**")
+    # ... 原 Tab 1 內容 ...
+
+elif selected_page == "🔥 CALL獵人":
+    st.markdown("### 🔥 **你的 CALL獵人程式碼**")
+    # ... 原 Tab 2 內容 ...
+
+elif selected_page == "⚙️ 回測系統":
+    st.markdown("### ⚙️ **你的回測程式碼**")
+    # ... 原 Tab 3 內容 ...
+
+elif selected_page == "🎯 戰情室":
+    st.markdown("### 🎯 **你的戰情室程式碼**")
+    # ... 原 Tab 4 內容 ...
+
+elif selected_page == "🔗 AI產業鏈":
+    st.markdown("### 🔗 **AI產業鏈分析 (永不跳轉！)**")
+    
+    # 🔒 鎖定狀態
+    col_lock_status, col_unlock = st.columns([3, 1])
+    col_lock_status.success("✅ **Radio 模式：絕對不跳**")
+    
+    # 產業鏈完整程式碼 (複製貼上你的原邏輯)
+    col1, col2 = st.columns([2, 1])
+    stock_code = col1.text_input("🏭 股票代碼", "2330")
+    days = col2.selectbox("天數", [7, 14, 30])
+    
+    if st.button("🚀 **啟動分析**", type="primary"):
+        with st.spinner("🔍 產業鏈分析中..."):
+            # 你的原分析邏輯
+            dl = DataLoader()
+            dl.login_by_token(api_token=FINMIND_TOKEN)
+            df = dl.taiwan_stock_info()
+            row = df[df['stock_id'] == stock_code]
+            
+            if not row.empty:
+                name = row['stock_name'].iloc[0]
+                industry = row['industry_category'].iloc[0]
+                
+                st.success(f"✅ **{stock_code} {name}** ({industry})")
+                st.markdown(f"""
+                **🎯 定位**：{industry}核心企業
+                **⬆️ 上游**：設備/材料供應商
+                **⬇️ 下游**：Nvidia/Apple/AMD
+                **📊 風向**：AI需求強勁
+                """)
+            else:
+                st.warning("查無此股票")
 
 # --------------------------
 # Tab 0: 穩健 ETF (v8.2 - 雙源穩定版)
@@ -1723,6 +1795,7 @@ with tabs[5]:
     
     st.markdown("---")
     st.caption("🔒 **終極鎖定版**：狀態初始化 + 三重鎖定 + 純 CSS 載入 | 永不跳轉")
+
 
 
 
