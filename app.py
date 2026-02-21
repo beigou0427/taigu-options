@@ -268,37 +268,7 @@ if not st.session_state.get('disclaimer_accepted', False):
         </ul>
     </div>
     """, unsafe_allow_html=True)
-    '''
-    # 功能導覽雙欄卡片
-    st.markdown("<h3 style='text-align: center; color: white; margin-bottom: 20px;'>🎯 貝伊果屋 6 大核心引擎</h3>", unsafe_allow_html=True)
-    
-    col_feat1, col_feat2 = st.columns(2)
-    with col_feat1:
-        st.markdown("""
-        <div style='background: linear-gradient(145deg, #1c2b23, #22382b); padding: 20px; border-radius: 12px; border-top: 4px solid #28a745; height: 100%;'>
-            <h4 style='color: #28a745; margin-top: 0;'>🌱 新手起手式（建議優先使用）</h4>
-            <ul style='color: #ddd; font-size: 15px; line-height: 1.7; padding-left: 20px;'>
-                <li><b>Tab 0 | 定投計畫</b>：設定每月自動買 ETF，靠複利致富</li>
-                <li><b>Tab 1 | 智能情報</b>：秒懂台股資金流向與大盤趨勢</li>
-                <li><b>Tab 4 | 戰情室</b>：追蹤市場熱門題材（如 AI、半導體）</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with col_feat2:
-        st.markdown("""
-        <div style='background: linear-gradient(145deg, #2b241c, #382c22); padding: 20px; border-radius: 12px; border-top: 4px solid #ffc107; height: 100%;'>
-            <h4 style='color: #ffc107; margin-top: 0;'>🚀 進階兵器庫（熟悉後再挑戰）</h4>
-            <ul style='color: #ddd; font-size: 15px; line-height: 1.7; padding-left: 20px;'>
-                <li><b style='color:#ffc107;'>Tab 5 | AI 產業鏈</b>：輸入代碼，自動推導上下游與全球情報</li>
-                <li><b>Tab 2 | CALL獵人</b>：篩選半年以上到期的低成本槓桿選擇權</li>
-                <li><b>Tab 3 | 回測系統</b>：一鍵驗證投資策略過去 10 年的真實績效</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-   '''
+ 
     # =========================================
     # 超強視覺按鈕 CSS（注入全局樣式）
     # =========================================
@@ -1733,6 +1703,7 @@ with tabs[0]:
 
     st.markdown("---")
     st.caption("🔍 貝伊果屋 | 內建 FinMind 個股智能辨識 | 自動推導上下游供應鏈")
+
 
 
 
