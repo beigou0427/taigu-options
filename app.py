@@ -268,7 +268,7 @@ if not st.session_state.get('disclaimer_accepted', False):
         </ul>
     </div>
     """, unsafe_allow_html=True)
-    
+    '''
     # 功能導覽雙欄卡片
     st.markdown("<h3 style='text-align: center; color: white; margin-bottom: 20px;'>🎯 貝伊果屋 6 大核心引擎</h3>", unsafe_allow_html=True)
     
@@ -298,7 +298,7 @@ if not st.session_state.get('disclaimer_accepted', False):
         """, unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
-    
+   '''
     # =========================================
     # 超強視覺按鈕 CSS（注入全局樣式）
     # =========================================
@@ -1733,6 +1733,7 @@ with tabs[0]:
 
     st.markdown("---")
     st.caption("🔍 貝伊果屋 | 內建 FinMind 個股智能辨識 | 自動推導上下游供應鏈")
+
 
 
 
