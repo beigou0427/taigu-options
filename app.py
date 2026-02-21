@@ -481,7 +481,7 @@ def parse_pct(x) -> float:
         return np.nan
 
 # ========= Tab 0 =========
-with tabs[0]:
+with tabs[5]:
 
     st.markdown("## 🐢 ETF 定投")
 
@@ -1497,7 +1497,7 @@ with tabs[4]:
 # --------------------------
 # Tab 5
 # --------------------------
-with tabs[5]:
+with tabs[0]:
     # ✅ 初始化 session_state（防止首次跳頁後資料消失）
     if "t5_result" not in st.session_state:
         st.session_state.t5_result = None
@@ -1733,6 +1733,7 @@ with tabs[5]:
 
     st.markdown("---")
     st.caption("🔍 貝伊果屋 | 內建 FinMind 個股智能辨識 | 自動推導上下游供應鏈")
+
 
 
 
