@@ -337,13 +337,13 @@ if not st.session_state.get('disclaimer_accepted', False):
     _, btn_col1, btn_col2, _ = st.columns([1.5, 3, 3, 1.5])
     
     with btn_col1:
-        if st.button("✅ 我懂基礎，進入主系統", key="btn_main", use_container_width=True):
+        if st.button("🤖 直接體驗 AI 產業分析", key="btn_main", use_container_width=True):
             st.session_state.disclaimer_accepted = True
             st.balloons()
             st.rerun()
             
     with btn_col2:
-        if st.button("🤖 直接體驗 AI 產業分析", key="btn_ai", use_container_width=True):
+        if st.button("✅ 我懂基礎，進入主系統", key="btn_ai", use_container_width=True):
             st.session_state.disclaimer_accepted = True
             st.query_params["jump"] = "5"
             st.balloons()
@@ -418,7 +418,7 @@ if not st.session_state.get('disclaimer_accepted', False):
 # =========================================
 # 5. 建立 Tabs
 # =========================================
-tabnames = ["ETF", "大盤", "CALL獵人", "回測", "戰情室", "AI產業鏈"]
+tabnames = ["AI產業鏈", "大盤", "CALL獵人", "回測", "戰情室", "持續買進"]
 tabs = st.tabs(tabnames)
 
 # [此處以下銜接原本的 with tabs[0]: ]
@@ -1733,6 +1733,7 @@ with tabs[0]:
 
     st.markdown("---")
     st.caption("🔍 貝伊果屋 | 內建 FinMind 個股智能辨識 | 自動推導上下游供應鏈")
+
 
 
 
