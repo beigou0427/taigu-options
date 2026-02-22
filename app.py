@@ -451,242 +451,6 @@ def parse_pct(x) -> float:
         return np.nan
 
 #========= Tab 0 =========
-with tabs[0]:
-    # ✅ 初始化 session_state（防止首次跳頁後資料消失）
-    if "t5_result" not in st.session_state:
-        st.session_state.t5_result = None
-    if "t5_stock_name" not in st.session_state:
-        st.session_state.t5_stock_name = ""
-    if "t5_industry" not in st.session_state:
-        st.session_state.t5_industry = "未知產業"
-    if "t5_news" not in st.session_state:
-        st.session_state.t5_news = []
-    if "t5_sources" not in st.session_state:
-        st.session_state.t5_sources = set()
-
-    st.markdown("""
-    <div style='text-align:center; padding:20px; 
-    background:linear-gradient(135deg, #141E30 0%, #243B55 100%); 
-    color:white; border-radius:15px; box-shadow:0 8px 25px rgba(0,0,0,0.4);'>
-        <h1 style='color:white; margin:0;'>🔗 全景產業鏈 AI 分析</h1>
-        <p style='color:white; opacity:0.9; margin:5px 0;'>FinMind 智能辨識 | 供應鏈上下游推導 | TAIEX <strong>{S_current:.0f}</strong></p>
-    </div>
-    """.format(S_current=S_current), unsafe_allow_html=True)
-
-    st.info("⚠️ 本分析報告僅供產業研究與學術討論，非投資建議。資料來自 FinMind 與全球隨機媒體抽樣。")
-
-    # 🎛️ 控制面板
-    col1, col2, col3 = st.columns([1.5, 1, 1.5])
-    with col1:
-        stock_code = st.text_input("🏭 產業指標股代碼", value="2330", max_chars=6, help="輸入代碼，系統將自動辨識公司名稱與產業")
-    with col2:
-        days_period = st.selectbox("⏳ 觀察期", [7, 14, 30, 90], index=1)
-    with col3:
-        focus_region = st.selectbox("🌐 新聞權重傾斜", ["全球均衡", "偏重台美", "偏重亞洲"], index=0)
-
-    # 🔑 金鑰檢查
-    groq_key = st.secrets.get("GROQ_KEY", "")
-    finmind_key = st.secrets.get("FINMIND_TOKEN", st.secrets.get("finmind_token", ""))
-
-    if not groq_key:
-        st.error("❌ **GROQ_KEY 遺失**！請至 Settings → Secrets 設定")
-        st.stop()
-
-    col_btn1, col_btn2 = st.columns([3, 1])
-    with col_btn1:
-        run_btn = st.button("🚀 **啟動產業鏈掃描與分析**", type="primary", use_container_width=True)
-    with col_btn2:
-        clear_btn = st.button("🗑️ 清除報告", use_container_width=True)
-
-    if clear_btn:
-        st.session_state.t5_result = None
-        st.session_state.t5_news = []
-        st.session_state.t5_sources = set()
-        st.rerun()
-
-    if run_btn:
-        prog = st.progress(0)
-        status = st.empty()
-
-        # 1️⃣ 【FinMind 智能辨識】
-        status.info(f"🔍 正在連接 FinMind 辨識代碼 {stock_code}...")
-        stock_name = ""
-        industry = "未知產業"
-        try:
-            from FinMind.data import DataLoader
-            dl = DataLoader()
-            if finmind_key:
-                dl.login_by_token(api_token=finmind_key)
-            df_info = dl.taiwan_stock_info()
-            stock_data = df_info[df_info['stock_id'] == stock_code]
-            if not stock_data.empty:
-                stock_name = stock_data['stock_name'].iloc[0]
-                industry = stock_data['industry_category'].iloc[0]
-                status.success(f"✅ 成功辨識：{stock_code} {stock_name} ({industry})")
-            else:
-                status.warning(f"⚠️ 無法辨識代碼 {stock_code}，將以純代碼進行分析")
-        except Exception as e:
-            st.caption(f"FinMind 查詢失敗: {e}")
-
-        prog.progress(15)
-
-        # 2️⃣ 【全球媒體矩陣】
-        mega_rss_pool = {
-            "Yahoo台股": "https://tw.stock.yahoo.com/rss/index.rss",
-            "工商時報": "https://ctee.com.tw/rss/all_news.xml",
-            "經濟日報": "https://money.udn.com/rss/money/1001/7247/udnrss2.0.xml",
-            "科技新報": "https://www.digitimes.com.tw/rss/rss.xml",
-            "鉅亨網": "https://www.moneydj.com/rss/allnews.xml",
-            "CNBC": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
-            "Yahoo Finance": f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={stock_code}.TW,QQQ",
-            "Bloomberg": "https://feeds.bloomberg.com/markets/news.rss",
-            "WSJ": "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml",
-            "Reuters": "https://feeds.reuters.com/reuters/businessNews",
-            "MarketWatch": "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
-            "日經亞洲": "https://www.nikkei.com/rss/en/business.xml",
-            "彭博亞洲": "https://feeds.bloomberg.com/markets/asia/news.rss",
-            "EE Times": "https://www.eetimes.com/feed/",
-            "SemiEngineering": "https://semiengineering.com/feed/",
-            "TechCrunch": "https://techcrunch.com/feed/"
-        }
-
-        import random
-        pool_keys = list(mega_rss_pool.keys())
-        selected_media_names = random.sample(pool_keys, min(10, len(pool_keys)))
-        selected_feeds = {k: mega_rss_pool[k] for k in selected_media_names}
-
-        prog.progress(30)
-        status.info("🎲 隨機選定 10 家國際媒體，開始並行抓取...")
-
-        # 3️⃣ 【收集新聞】
-        import feedparser
-        import time
-        raw_news_pool = []
-        collected_sources = set()
-
-        for media_name, rss_url in selected_feeds.items():
-            try:
-                feed = feedparser.parse(rss_url)
-                if feed.entries:
-                    collected_sources.add(media_name)
-                for entry in feed.entries[:5]:
-                    title = entry.title[:80] + "..." if len(entry.title) > 80 else entry.title
-                    raw_news_pool.append({"media": media_name, "title": title, "date": entry.get('published', '即時')})
-                time.sleep(0.1)
-            except:
-                continue
-
-        prog.progress(50)
-        status.info("📥 新聞抓取完畢，進行關聯性篩選...")
-
-        keywords = [stock_code, stock_name, industry, "半導體", "AI", "供應鏈", "股市", "Tech"]
-        priority_news = [n for n in raw_news_pool if any(k.lower() in n['title'].lower() for k in keywords if k)]
-
-        if len(priority_news) >= 20:
-            final_20_news = random.sample(priority_news, 20)
-        else:
-            remaining = 20 - len(priority_news)
-            other_news = [n for n in raw_news_pool if n not in priority_news]
-            final_20_news = priority_news + random.sample(other_news, min(remaining, len(other_news)))
-
-        news_texts_for_ai = [f"[{n['media']}] {n['title']}" for n in final_20_news]
-        news_texts_for_ai.extend([
-            f"大盤 TAIEX {S_current:.0f}，月線 {ma20:.0f}",
-            f"{stock_code} {stock_name} 客觀技術動態"
-        ])
-        news_summary = " | ".join(news_texts_for_ai)
-        prog.progress(65)
-
-        # 4️⃣ 【AI Prompt】
-        ai_prompt = f"""
-        你是一位中立客觀的資深產業鏈分析師。
-        本次分析核心標的：【{stock_code} {stock_name}】(所屬產業：{industry})
-        請綜合以下 {len(final_20_news)} 篇抽樣新聞，進行 {days_period} 天的產業鏈趨勢剖析。
-
-        🌍 情報資料庫（來自 {len(collected_sources)} 家媒體）：
-        {news_summary}
-        
-        📊 客觀數據：TAIEX {S_current:.0f} | MA20:{ma20:.0f} | MA60:{ma60:.0f}
-        
-        【嚴格規範】：
-        1. 絕對禁止提供「買賣、持有、目標價」等交易建議，僅作學術探討。
-        2. 內容必須符合台灣金管會法規。
-
-        【請提供以下架構的深度分析】（繁體中文，600字內）：
-        1. 🎯 **核心企業定位**：{stock_name} 在 {industry} 中的競爭地位與近期新聞亮點。
-        2. ⬆️ **上游供應鏈觀測**：列出 {stock_name} 具代表性的上游供應商或原物料(至少3家)，分析近期供應鏈利弊。
-        3. ⬇️ **下游客戶與應用**：列出 {stock_name} 具代表性的下游大客戶或終端應用(至少3家)，分析終端需求拉力。
-        4. 🌍 **全球媒體共識**：統整國際外媒與台媒對該產業鏈的綜合風向。
-        5. 📉 **客觀技術面狀態**：目前價格相對於均線的相對位置結構。
-        """
-
-        status.info(f"🦙 正在自動推導 {stock_name} 上下游產業鏈並進行分析...")
-
-        # 🦙 Groq 分析
-        groq_analysis = None
-        try:
-            from groq import Groq
-            import httpx
-            client = Groq(api_key=groq_key, http_client=httpx.Client())
-            groq_resp = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=[
-                    {"role": "system", "content": "你是一個不提供投資建議、專注於推導產業鏈上下游關聯的研究員。"},
-                    {"role": "user", "content": ai_prompt}
-                ],
-                max_tokens=800,
-                temperature=0.2
-            )
-            groq_analysis = groq_resp.choices[0].message.content
-        except Exception as e:
-            st.error(f"🦙 AI 引擎暫時無法連線：{e}")
-
-        prog.progress(100)
-        status.empty()
-
-        # ✅ 儲存結果到 session_state（跳頁後回來還在）
-        if groq_analysis:
-            display_title = f"{stock_code} {stock_name}" if stock_name else stock_code
-            st.session_state.t5_result = groq_analysis
-            st.session_state.t5_stock_name = stock_name
-            st.session_state.t5_industry = industry
-            st.session_state.t5_news = final_20_news
-            st.session_state.t5_sources = collected_sources
-            st.session_state.t5_display_title = display_title
-            st.session_state.t5_gap_pct = (S_current - ma20) / ma20 * 100
-
-    # ✅ 只要 session_state 有結果，永遠顯示（不管有沒有跳頁）
-    if st.session_state.t5_result:
-        st.success(f"✅ 報告生成完畢（核心標的：{st.session_state.t5_display_title} | 產業：{st.session_state.t5_industry}）")
-        st.markdown("---")
-        st.markdown(f"## 🔗 **【{st.session_state.t5_display_title}】全景產業鏈報告**")
-        st.caption(f"所屬產業分類：`{st.session_state.t5_industry}` | 資料涵蓋：`{len(st.session_state.t5_news)} 篇新聞`")
-        st.markdown(st.session_state.t5_result)
-
-        # 📰 底層數據
-        with st.expander(f"🔍 查看 AI 採樣的底層數據 (嚴選 {len(st.session_state.t5_news)} 篇，來自 {len(st.session_state.t5_sources)} 家媒體)"):
-            import pandas as pd
-            if st.session_state.t5_news:
-                df_news = pd.DataFrame(st.session_state.t5_news)
-                df_news.index += 1
-                df_news.columns = ["媒體來源", "新聞標題", "發布時間"]
-                st.dataframe(df_news, use_container_width=True)
-                st.caption(f"**本次命中的媒體矩陣**：{', '.join(list(st.session_state.t5_sources))}")
-
-        # 📊 大盤快照
-        st.markdown("### 📊 **大盤客觀市場數據快照**")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            trend = "均線之上" if S_current > ma20 else "均線之下"
-            st.metric("大盤與月線位階", trend)
-        with c2:
-            st.metric("大盤月線乖離率", f"{st.session_state.t5_gap_pct:+.2f}%")
-        with c3:
-            volatility = "擴大" if abs(st.session_state.t5_gap_pct) > 2 else "收斂"
-            st.metric("近期波動度觀察", volatility)
-
-    st.markdown("---")
-    st.caption("🔍 貝伊果屋 | 內建 FinMind 個股智能辨識 | 自動推導上下游供應鏈")
 
 
 #        
@@ -1710,6 +1474,245 @@ with tabs[5]:
     st.caption("資料來源：Yahoo Finance / FinMind | 過去績效不代表未來表現")
     st.success("🎉 **定投啟蒙完成！從 0050 開始！**")
 
+# --------------------------
+# Tab 5
+# --------------------------
+with tabs[0]:
+    # ✅ 初始化 session_state（防止首次跳頁後資料消失）
+    if "t5_result" not in st.session_state:
+        st.session_state.t5_result = None
+    if "t5_stock_name" not in st.session_state:
+        st.session_state.t5_stock_name = ""
+    if "t5_industry" not in st.session_state:
+        st.session_state.t5_industry = "未知產業"
+    if "t5_news" not in st.session_state:
+        st.session_state.t5_news = []
+    if "t5_sources" not in st.session_state:
+        st.session_state.t5_sources = set()
+
+    st.markdown("""
+    <div style='text-align:center; padding:20px; 
+    background:linear-gradient(135deg, #141E30 0%, #243B55 100%); 
+    color:white; border-radius:15px; box-shadow:0 8px 25px rgba(0,0,0,0.4);'>
+        <h1 style='color:white; margin:0;'>🔗 全景產業鏈 AI 分析</h1>
+        <p style='color:white; opacity:0.9; margin:5px 0;'>FinMind 智能辨識 | 供應鏈上下游推導 | TAIEX <strong>{S_current:.0f}</strong></p>
+    </div>
+    """.format(S_current=S_current), unsafe_allow_html=True)
+
+    st.info("⚠️ 本分析報告僅供產業研究與學術討論，非投資建議。資料來自 FinMind 與全球隨機媒體抽樣。")
+
+    # 🎛️ 控制面板
+    col1, col2, col3 = st.columns([1.5, 1, 1.5])
+    with col1:
+        stock_code = st.text_input("🏭 產業指標股代碼", value="2330", max_chars=6, help="輸入代碼，系統將自動辨識公司名稱與產業")
+    with col2:
+        days_period = st.selectbox("⏳ 觀察期", [7, 14, 30, 90], index=1)
+    with col3:
+        focus_region = st.selectbox("🌐 新聞權重傾斜", ["全球均衡", "偏重台美", "偏重亞洲"], index=0)
+
+    # 🔑 金鑰檢查
+    groq_key = st.secrets.get("GROQ_KEY", "")
+    finmind_key = st.secrets.get("FINMIND_TOKEN", st.secrets.get("finmind_token", ""))
+
+    if not groq_key:
+        st.error("❌ **GROQ_KEY 遺失**！請至 Settings → Secrets 設定")
+        st.stop()
+
+    col_btn1, col_btn2 = st.columns([3, 1])
+    with col_btn1:
+        run_btn = st.button("🚀 **啟動產業鏈掃描與分析**", type="primary", use_container_width=True)
+    with col_btn2:
+        clear_btn = st.button("🗑️ 清除報告", use_container_width=True)
+
+    if clear_btn:
+        st.session_state.t5_result = None
+        st.session_state.t5_news = []
+        st.session_state.t5_sources = set()
+        st.rerun()
+
+    if run_btn:
+        prog = st.progress(0)
+        status = st.empty()
+
+        # 1️⃣ 【FinMind 智能辨識】
+        status.info(f"🔍 正在連接 FinMind 辨識代碼 {stock_code}...")
+        stock_name = ""
+        industry = "未知產業"
+        try:
+            from FinMind.data import DataLoader
+            dl = DataLoader()
+            if finmind_key:
+                dl.login_by_token(api_token=finmind_key)
+            df_info = dl.taiwan_stock_info()
+            stock_data = df_info[df_info['stock_id'] == stock_code]
+            if not stock_data.empty:
+                stock_name = stock_data['stock_name'].iloc[0]
+                industry = stock_data['industry_category'].iloc[0]
+                status.success(f"✅ 成功辨識：{stock_code} {stock_name} ({industry})")
+            else:
+                status.warning(f"⚠️ 無法辨識代碼 {stock_code}，將以純代碼進行分析")
+        except Exception as e:
+            st.caption(f"FinMind 查詢失敗: {e}")
+
+        prog.progress(15)
+
+        # 2️⃣ 【全球媒體矩陣】
+        mega_rss_pool = {
+            "Yahoo台股": "https://tw.stock.yahoo.com/rss/index.rss",
+            "工商時報": "https://ctee.com.tw/rss/all_news.xml",
+            "經濟日報": "https://money.udn.com/rss/money/1001/7247/udnrss2.0.xml",
+            "科技新報": "https://www.digitimes.com.tw/rss/rss.xml",
+            "鉅亨網": "https://www.moneydj.com/rss/allnews.xml",
+            "CNBC": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+            "Yahoo Finance": f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={stock_code}.TW,QQQ",
+            "Bloomberg": "https://feeds.bloomberg.com/markets/news.rss",
+            "WSJ": "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml",
+            "Reuters": "https://feeds.reuters.com/reuters/businessNews",
+            "MarketWatch": "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
+            "日經亞洲": "https://www.nikkei.com/rss/en/business.xml",
+            "彭博亞洲": "https://feeds.bloomberg.com/markets/asia/news.rss",
+            "EE Times": "https://www.eetimes.com/feed/",
+            "SemiEngineering": "https://semiengineering.com/feed/",
+            "TechCrunch": "https://techcrunch.com/feed/"
+        }
+
+        import random
+        pool_keys = list(mega_rss_pool.keys())
+        selected_media_names = random.sample(pool_keys, min(10, len(pool_keys)))
+        selected_feeds = {k: mega_rss_pool[k] for k in selected_media_names}
+
+        prog.progress(30)
+        status.info("🎲 隨機選定 10 家國際媒體，開始並行抓取...")
+
+        # 3️⃣ 【收集新聞】
+        import feedparser
+        import time
+        raw_news_pool = []
+        collected_sources = set()
+
+        for media_name, rss_url in selected_feeds.items():
+            try:
+                feed = feedparser.parse(rss_url)
+                if feed.entries:
+                    collected_sources.add(media_name)
+                for entry in feed.entries[:5]:
+                    title = entry.title[:80] + "..." if len(entry.title) > 80 else entry.title
+                    raw_news_pool.append({"media": media_name, "title": title, "date": entry.get('published', '即時')})
+                time.sleep(0.1)
+            except:
+                continue
+
+        prog.progress(50)
+        status.info("📥 新聞抓取完畢，進行關聯性篩選...")
+
+        keywords = [stock_code, stock_name, industry, "半導體", "AI", "供應鏈", "股市", "Tech"]
+        priority_news = [n for n in raw_news_pool if any(k.lower() in n['title'].lower() for k in keywords if k)]
+
+        if len(priority_news) >= 20:
+            final_20_news = random.sample(priority_news, 20)
+        else:
+            remaining = 20 - len(priority_news)
+            other_news = [n for n in raw_news_pool if n not in priority_news]
+            final_20_news = priority_news + random.sample(other_news, min(remaining, len(other_news)))
+
+        news_texts_for_ai = [f"[{n['media']}] {n['title']}" for n in final_20_news]
+        news_texts_for_ai.extend([
+            f"大盤 TAIEX {S_current:.0f}，月線 {ma20:.0f}",
+            f"{stock_code} {stock_name} 客觀技術動態"
+        ])
+        news_summary = " | ".join(news_texts_for_ai)
+        prog.progress(65)
+
+        # 4️⃣ 【AI Prompt】
+        ai_prompt = f"""
+        你是一位中立客觀的資深產業鏈分析師。
+        本次分析核心標的：【{stock_code} {stock_name}】(所屬產業：{industry})
+        請綜合以下 {len(final_20_news)} 篇抽樣新聞，進行 {days_period} 天的產業鏈趨勢剖析。
+
+        🌍 情報資料庫（來自 {len(collected_sources)} 家媒體）：
+        {news_summary}
+        
+        📊 客觀數據：TAIEX {S_current:.0f} | MA20:{ma20:.0f} | MA60:{ma60:.0f}
+        
+        【嚴格規範】：
+        1. 絕對禁止提供「買賣、持有、目標價」等交易建議，僅作學術探討。
+        2. 內容必須符合台灣金管會法規。
+
+        【請提供以下架構的深度分析】（繁體中文，600字內）：
+        1. 🎯 **核心企業定位**：{stock_name} 在 {industry} 中的競爭地位與近期新聞亮點。
+        2. ⬆️ **上游供應鏈觀測**：列出 {stock_name} 具代表性的上游供應商或原物料(至少3家)，分析近期供應鏈利弊。
+        3. ⬇️ **下游客戶與應用**：列出 {stock_name} 具代表性的下游大客戶或終端應用(至少3家)，分析終端需求拉力。
+        4. 🌍 **全球媒體共識**：統整國際外媒與台媒對該產業鏈的綜合風向。
+        5. 📉 **客觀技術面狀態**：目前價格相對於均線的相對位置結構。
+        """
+
+        status.info(f"🦙 正在自動推導 {stock_name} 上下游產業鏈並進行分析...")
+
+        # 🦙 Groq 分析
+        groq_analysis = None
+        try:
+            from groq import Groq
+            import httpx
+            client = Groq(api_key=groq_key, http_client=httpx.Client())
+            groq_resp = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": "你是一個不提供投資建議、專注於推導產業鏈上下游關聯的研究員。"},
+                    {"role": "user", "content": ai_prompt}
+                ],
+                max_tokens=800,
+                temperature=0.2
+            )
+            groq_analysis = groq_resp.choices[0].message.content
+        except Exception as e:
+            st.error(f"🦙 AI 引擎暫時無法連線：{e}")
+
+        prog.progress(100)
+        status.empty()
+
+        # ✅ 儲存結果到 session_state（跳頁後回來還在）
+        if groq_analysis:
+            display_title = f"{stock_code} {stock_name}" if stock_name else stock_code
+            st.session_state.t5_result = groq_analysis
+            st.session_state.t5_stock_name = stock_name
+            st.session_state.t5_industry = industry
+            st.session_state.t5_news = final_20_news
+            st.session_state.t5_sources = collected_sources
+            st.session_state.t5_display_title = display_title
+            st.session_state.t5_gap_pct = (S_current - ma20) / ma20 * 100
+
+    # ✅ 只要 session_state 有結果，永遠顯示（不管有沒有跳頁）
+    if st.session_state.t5_result:
+        st.success(f"✅ 報告生成完畢（核心標的：{st.session_state.t5_display_title} | 產業：{st.session_state.t5_industry}）")
+        st.markdown("---")
+        st.markdown(f"## 🔗 **【{st.session_state.t5_display_title}】全景產業鏈報告**")
+        st.caption(f"所屬產業分類：`{st.session_state.t5_industry}` | 資料涵蓋：`{len(st.session_state.t5_news)} 篇新聞`")
+        st.markdown(st.session_state.t5_result)
+
+        # 📰 底層數據
+        with st.expander(f"🔍 查看 AI 採樣的底層數據 (嚴選 {len(st.session_state.t5_news)} 篇，來自 {len(st.session_state.t5_sources)} 家媒體)"):
+            import pandas as pd
+            if st.session_state.t5_news:
+                df_news = pd.DataFrame(st.session_state.t5_news)
+                df_news.index += 1
+                df_news.columns = ["媒體來源", "新聞標題", "發布時間"]
+                st.dataframe(df_news, use_container_width=True)
+                st.caption(f"**本次命中的媒體矩陣**：{', '.join(list(st.session_state.t5_sources))}")
+
+        # 📊 大盤快照
+        st.markdown("### 📊 **大盤客觀市場數據快照**")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            trend = "均線之上" if S_current > ma20 else "均線之下"
+            st.metric("大盤與月線位階", trend)
+        with c2:
+            st.metric("大盤月線乖離率", f"{st.session_state.t5_gap_pct:+.2f}%")
+        with c3:
+            volatility = "擴大" if abs(st.session_state.t5_gap_pct) > 2 else "收斂"
+            st.metric("近期波動度觀察", volatility)
+
+    st.markdown("---")
+    st.caption("🔍 貝伊果屋 | 內建 FinMind 個股智能辨識 | 自動推導上下游供應鏈")
 
 
 
