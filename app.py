@@ -178,6 +178,30 @@ with st.spinner("🚀 啟動財富引擎..."):
         S_current, df_latest, latest_date, ma20, ma60 = 23000.0, pd.DataFrame(), pd.to_datetime(date.today()), 22800.0, 22500.0
 
 
+# 🔥 歷史數據載入（回測用）
+@st.cache_data(ttl=3600)
+def get_historical_options(token):
+    dl = DataLoader()
+    if token: dl.login_by_token(api_token=token)
+    start_date = (date.today() - timedelta(days=180)).strftime("%Y-%m-%d")
+    try:
+        df_hist = dl.taiwan_option_daily("TXO", start_date=start_date)
+        if not df_hist.empty:
+            df_hist["date"] = pd.to_datetime(df_hist["date"])
+            return df_hist
+    except: pass
+    return pd.DataFrame()
+
+if 'df_historical' not in st.session_state:
+    df_historical = get_historical_options(FINMIND_TOKEN)
+    st.session_state['df_historical'] = df_historical
+df_historical = st.session_state['df_historical']
+
+# 確保latest_date正確
+if df_latest.empty:
+    latest_date = pd.to_datetime(date.today())
+else:
+    latest_date = pd.to_datetime(df_latest["date"].max() if "date" in df_latest.columns else date.today())
 
 # =========================================
 # 4. 主介面 & 市場快報
@@ -450,6 +474,7 @@ with tabs[0]:
     """)
     
     st.caption("📊 **操作邏輯**：優先槓桿最接近 → 最高微觀勝率 → 最遠天數。建議搭配遠月 LEAPS CALL 降低時間風險。")
+
 
 
 
