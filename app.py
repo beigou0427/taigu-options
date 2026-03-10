@@ -25,7 +25,7 @@ import httpx
 # =========================================
 # 1. 初始化 & 設定
 # =========================================
-st.set_page_config(page_title="貝伊果屋 - 0050不只正2", layout="wide", page_icon="🥯")
+st.set_page_config(page_title="貝伊果屋 - 0050不只正2 ", layout="wide", page_icon="🥯")
 # 安全檢查 Token（放在 st.set_page_config 後）
 try:
     FINMIND_TOKEN = st.secrets.get("FINMIND_TOKEN", st.secrets.get("finmind_token", ""))
@@ -450,6 +450,7 @@ with tabs[0]:
     """)
     
     st.caption("📊 **操作邏輯**：優先槓桿最接近 → 最高微觀勝率 → 最遠天數。建議搭配遠月 LEAPS CALL 降低時間風險。")
+
 
 
 
