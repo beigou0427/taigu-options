@@ -1,7 +1,6 @@
 """
 
-🔰 貝伊果屋 - 財富雙軌系統 (旗艦完整版 v6.7)
-整合：ETF定投 + 智能情報中心 + LEAP Call策略 + 戰情室(12因子) + 真實回測 + AI 產業鏈推導
+🔰 貝伊果屋 - 0050不只正2
 """
 
 import streamlit as st
@@ -22,53 +21,6 @@ import matplotlib.pyplot as plt
 import random
 import httpx
 
-# =========================================
-# 0. 自動跳轉 JS 函數 (完美修復版，支援 jump=5)
-# =========================================
-def auto_jump_to_tab():
-    jump = st.query_params.get("jump", None)
-    if not jump:
-        return False
-
-    if isinstance(jump, list):
-        jump = jump[0]
-
-    jump = str(jump).strip().lower()
-
-    if jump.startswith("tab"):
-        idx_str = jump.replace("tab", "", 1)
-    else:
-        idx_str = jump
-
-    if not idx_str.isdigit():
-        return False
-
-    target_idx = int(idx_str)
-
-    components.html(
-        f"""
-        <script>
-        (function() {{
-          const target = {target_idx};
-          let tries = 0;
-          const timer = setInterval(() => {{
-            const tabs = window.parent.document.querySelectorAll('button[data-baseweb="tab"]');
-            if (tabs && tabs.length > target) {{
-              tabs[target].click();
-              clearInterval(timer);
-            }}
-            tries += 1;
-            if (tries > 40) clearInterval(timer); 
-          }}, 200);
-        }})();
-        </script>
-        """,
-        height=0,
-    )
-    st.query_params.clear()
-    return True
-
-auto_jump_to_tab()
 
 # =========================================
 # 1. 初始化 & 設定
@@ -498,5 +450,6 @@ with tabs[0]:
     """)
     
     st.caption("📊 **操作邏輯**：優先槓桿最接近 → 最高微觀勝率 → 最遠天數。建議搭配遠月 LEAPS CALL 降低時間風險。")
+
 
 
