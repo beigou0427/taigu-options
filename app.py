@@ -77,7 +77,6 @@ st.set_page_config(page_title="貝伊果屋-財富雙軌系統", layout="wide", 
 # 安全檢查 Token（放在 st.set_page_config 後）
 try:
     FINMIND_TOKEN = st.secrets.get("FINMIND_TOKEN", st.secrets.get("finmind_token", ""))
-    st.info(f"🔑 Token 狀態: {'✅ 已設定' if FINMIND_TOKEN else '❌ 未設定'}")
     if not FINMIND_TOKEN:
         st.error("🚨 請在 .streamlit/secrets.toml 加: FINMIND_TOKEN = '你的token'\n或 Cloud 設定 Secrets")
         # Fallback 繼續跑，但標紅警告
@@ -639,3 +638,4 @@ with tabs[0]:
     """)
     
     st.caption("📊 **操作邏輯**：優先槓桿最接近 → 最高微觀勝率 → 最遠天數。建議搭配遠月 LEAPS CALL 降低時間風險。")
+
