@@ -232,27 +232,26 @@ tabs = st.tabs(tabnames)
 # ✅ 完整 Tab 0: 槓桿篩選 + LEAPS CALL 回測版 v185
 # Tab 0 v19.1: 槓桿篩選 + Email付費回測 (貝伊果屋版)
 # ──────────────────────────────────────────────────────────────────────────
+# Tab 0 v19.1 完整版：槓桿篩選 + Email付費回測 (已修key衝突)
+# ────────────────────────────────────────────────────────────────────────────────
 with tabs[0]:
-    # Session State
+    # Session State 初始化
     KEY_RES = "results_lev_v191"
     KEY_BEST = "best_lev_v191"
     KEY_BT = "backtest_lev_v191"
     KEY_EMAIL = "email_v191"
-    KEY_USES = "bt_uses_v191"  # 額度計數
+    KEY_USES = "bt_uses_v191"  # 每日額度計數器
 
-    for key in [KEY_RES, KEY_BT, KEY_EMAIL, KEY_USES]:
-        if key not in st.session_state: st.session_state[key] = []
-        elif key == KEY_EMAIL or key == KEY_USES:
-            if key not in st.session_state: st.session_state[key] = ""
-            elif key == KEY_USES: st.session_state[key] = 0
-
+    if KEY_RES not in st.session_state: st.session_state[KEY_RES] = []
     if KEY_BEST not in st.session_state: st.session_state[KEY_BEST] = None
+    if KEY_BT not in st.session_state: st.session_state[KEY_BT] = None
+    if KEY_EMAIL not in st.session_state: st.session_state[KEY_EMAIL] = ""
+    if KEY_USES not in st.session_state: st.session_state[KEY_USES] = 0
 
-    st.markdown("### ♟️ **貝伊果屋專業戰情室 v19.1**")
-    st.markdown("**槓桿篩選 + 微觀勝率 + LEAPS CALL + Email付費回測**")
+    st.markdown("### ♟️ **貝伊果屋專業戰情室 v19.1 (付費回測)**")
     col_search, col_backtest = st.columns([1.3, 0.7])
 
-    # ── 核心函數 ─────────────────────────────────────────────────────────────────
+    # ── 1. 原始評分函數 ──────────────────────────────────────────────────────────
     def calculate_raw_score_v191(delta, days, volume, S, K, op_type):
         s_delta = abs(delta) * 100.0
         m = (S - K) / S if op_type == "CALL" else (K - S) / S
@@ -261,6 +260,7 @@ with tabs[0]:
         s_vol = min(volume / 5000.0 * 100, 100)
         return s_delta * 0.4 + s_money * 0.2 + s_time * 0.2 + s_vol * 0.2
 
+    # ── 2. 微觀勝率展開 (Top40% → 90-95%) ────────────────────────────────────────
     def micro_expand_scores_v191(results):
         if not results: return []
         results.sort(key=lambda x: x['raw_score'], reverse=True)
@@ -271,275 +271,372 @@ with tabs[0]:
                 score = 95.0 - (i / (top_n - 1) * 5.0) if top_n > 1 else 95.0
             else:
                 remain = n - top_n
-                score = 85.0 - ((i - top_n) / (remain - 1) * 70.0) if remain > 1 else 15.0
+                idx = i - top_n
+                score = 85.0 - (idx / (remain - 1) * 70.0) if remain > 1 else 15.0
             results[i]['勝率'] = round(score, 1)
         return results
 
+    # ── 3. 大盤槓桿回測 (FinMind + Fallback) ─────────────────────────────────────
     @st.cache_data(ttl=3600)
     def backtest_taiex_leverage_v191(lev, days, token):
         try:
             from FinMind.data import DataLoader
             dl = DataLoader()
             if token: dl.login_by_token(api_token=token)
-            start = (date.today() - timedelta(days=max(days * 2, 180))).strftime("%Y-%m-%d")
-            df = dl.taiwan_stock_daily("TAIEX", start_date=start)
-            if df.empty: raise ValueError("無TAIEX數據")
+            start_date = (date.today() - timedelta(days=max(days * 2, 180))).strftime("%Y-%m-%d")
+            df_taiex = dl.taiwan_stock_daily("TAIEX", start_date=start_date)
             
-            df['date'] = pd.to_datetime(df['date'])
-            df = df.sort_values('date').reset_index(drop=True)
-            df['ret'] = df['close'].pct_change().fillna(0)
+            if df_taiex.empty: raise ValueError("TAIEX數據為空")
+            df_taiex['date'] = pd.to_datetime(df_taiex['date'])
+            df_taiex = df_taiex.sort_values('date').reset_index(drop=True)
+            df_taiex['ret'] = df_taiex['close'].pct_change().fillna(0)
 
-            theta_daily = 0.0003  # LEAPS每日0.03%
-            lev_ret = df['ret'] * lev * 0.8 - theta_daily  # Delta調整0.8
-            lev_ret = lev_ret.clip(lower=-0.95)
+            # LEAPS槓桿模擬：日報酬 × 槓桿 × Delta(0.8) - Theta(0.03%)
+            theta_decay = 0.0003
+            lev_returns = df_taiex['ret'] * lev * 0.8 - theta_decay
+            lev_returns = lev_returns.clip(lower=-0.95)  # 避免極端虧損
 
-            df['cum_tai'] = (1 + df['ret']).cumprod()
-            df['cum_lev'] = (1 + lev_ret).cumprod()
+            df_taiex['cum_tai'] = (1 + df_taiex['ret']).cumprod()
+            df_taiex['cum_lev'] = (1 + lev_returns).cumprod()
 
-            m_ret = lev_ret.mean()
-            m_std = lev_ret.std()
-            total_tai = df['cum_tai'].iloc[-1] - 1
-            total_lev = df['cum_lev'].iloc[-1] - 1
-            win_rate = (lev_ret > 0).mean() * 100
-            sharpe = (m_ret / m_std * np.sqrt(252)) if m_std > 0 else 0
-            maxdd = (df['cum_lev'] / df['cum_lev'].cummax() - 1).min()
+            avg_ret = lev_returns.mean()
+            std_ret = lev_returns.std()
+            total_tai = df_taiex['cum_tai'].iloc[-1] - 1
+            total_lev = df_taiex['cum_lev'].iloc[-1] - 1
+            winrate = (lev_returns > 0).mean() * 100
+            sharpe_ratio = (avg_ret / std_ret * np.sqrt(252)) if std_ret > 0 else 0
+            max_drawdown = (df_taiex['cum_lev'] / df_taiex['cum_lev'].cummax() - 1).min()
 
-            return df[['date','cum_tai','cum_lev']].copy(), {
-                'total_lev': total_lev, 'total_tai': total_tai,
-                'win_rate': round(win_rate, 1), 'sharpe': round(sharpe, 2),
-                'maxdd': round(maxdd * 100, 1), 'trades': len(df),
-                'lev': lev, 'avg_ret': round(m_ret * 100, 2)
-            }
-        except:
-            # Fallback mock數據
+            return (df_taiex[['date', 'cum_tai', 'cum_lev']].copy(),
+                   {'total_lev': total_lev, 'total_tai': total_tai, 'win_rate': round(winrate, 1),
+                    'sharpe': round(sharpe_ratio, 2), 'maxdd': round(max_drawdown * 100, 1),
+                    'trades': len(df_taiex), 'lev': lev, 'avg_ret': round(avg_ret * 100, 2)})
+
+        except Exception as e:
+            # Mock數據fallback (保證不crash)
             np.random.seed(42)
             n_days = min(days * 2, 365)
             dates = pd.date_range(end=date.today(), periods=n_days, freq='B')
-            mock_ret = np.random.normal(0.0005, 0.012, n_days)
-            lev_ret_m = mock_ret * lev * 0.8 - 0.0003
-            df_m = pd.DataFrame({
-                'date': dates, 'cum_tai': (1 + pd.Series(mock_ret)).cumprod(),
-                'cum_lev': (1 + pd.Series(lev_ret_m)).cumprod()
+            mock_daily_ret = np.random.normal(0.0005, 0.012, n_days)
+            mock_lev_ret = mock_daily_ret * lev * 0.8 - 0.0003
+            mock_df = pd.DataFrame({
+                'date': dates,
+                'cum_tai': (1 + pd.Series(mock_daily_ret)).cumprod(),
+                'cum_lev': (1 + pd.Series(mock_lev_ret)).cumprod()
             })
-            m_ret_m = lev_ret_m.mean()
-            m_std_m = lev_ret_m.std()
-            total_tai_m = df_m['cum_tai'].iloc[-1] - 1
-            total_lev_m = df_m['cum_lev'].iloc[-1] - 1
-            win_m = (pd.Series(lev_ret_m) > 0).mean() * 100
-            sharpe_m = (m_ret_m / m_std_m * np.sqrt(252)) if m_std_m > 0 else 0
-            maxdd_m = (df_m['cum_lev'] / df_m['cum_lev'].cummax() - 1).min()
-            return df_m, {
-                'total_lev': total_lev_m, 'total_tai': total_tai_m,
-                'win_rate': round(win_m, 1), 'sharpe': round(sharpe_m, 2),
-                'maxdd': round(maxdd_m * 100, 1), 'trades': n_days,
-                'lev': lev, 'avg_ret': round(m_ret_m * 100, 2)
-            }
+            mock_avg = mock_lev_ret.mean()
+            mock_std = mock_lev_ret.std()
+            mock_total_tai = mock_df['cum_tai'].iloc[-1] - 1
+            mock_total_lev = mock_df['cum_lev'].iloc[-1] - 1
+            mock_win = (pd.Series(mock_lev_ret) > 0).mean() * 100
+            mock_sharpe = (mock_avg / mock_std * np.sqrt(252)) if mock_std > 0 else 0
+            mock_dd = (mock_df['cum_lev'] / mock_df['cum_lev'].cummax() - 1).min()
+            
+            return (mock_df, {
+                'total_lev': mock_total_lev, 'total_tai': mock_total_tai,
+                'win_rate': round(mock_win, 1), 'sharpe': round(mock_sharpe, 2),
+                'maxdd': round(mock_dd * 100, 1), 'trades': n_days,
+                'lev': lev, 'avg_ret': round(mock_avg * 100, 2)
+            })
 
-    # ════ 左欄：免費槓桿掃描 ═══════════════════════════════════════════════════
+    # ════ 左欄：免費槓桿掃描 ════════════════════════════════════════════════════
     with col_search:
-        st.markdown("#### 🔍 **免費槓桿掃描 (LEAPS CALL優化)**")
+        st.markdown("#### 🔍 **免費槓桿掃描 (LEAPS CALL優化)** 💰")
 
-        if df_latest.empty: 
-            st.error("⚠️ 無資料"); st.stop()
+        if df_latest.empty:
+            st.error("⚠️ 無最新資料，請檢查數據源")
+            st.stop()
 
+        # 資料清理
         df_work = df_latest.copy()
         df_work['call_put'] = df_work['call_put'].str.upper().str.strip()
         for col in ['close', 'volume', 'strike_price']:
             df_work[col] = pd.to_numeric(df_work[col], errors='coerce').fillna(0)
 
-        c1, c2, c3, c4 = st.columns([1,1,1,0.6])
-        with c1: 
-            dir_mode = st.selectbox("方向", ["📈 CALL (LEAPS)", "📉 PUT"], 0, key="v191_dir")
+        # 篩選控制
+        c1, c2, c3, c4 = st.columns([1, 1, 1, 0.6])
+        with c1:
+            dir_mode = st.selectbox("📊 方向", ["📈 CALL (LEAPS)", "📉 PUT"], 0, key="v191_dir")
             op_type = "CALL" if "CALL" in dir_mode else "PUT"
         with c2:
-            contracts = df_work[df_work['call_put']==op_type]['contract_date'].dropna()
-            available = sorted(contracts[contracts.astype(str).str.len()==6].unique())
-            default_idx = len(available)-1 if available else 0
-            sel_con = st.selectbox("月份", available if available else [""], index=default_idx, key="v191_con")
-        with c3: target_lev = st.slider("目標槓桿", 2.0, 20.0, 5.0, 0.5, key="v191_lev")
+            contracts = df_work[df_work['call_put'] == op_type]['contract_date'].dropna()
+            available = sorted(contracts[contracts.astype(str).str.len() == 6].unique())
+            default_idx = len(available) - 1 if available else 0
+            sel_con = st.selectbox("📅 月份", available if available else [""],
+                                   index=default_idx, key="v191_con")
+        with c3:
+            target_lev = st.slider("🎯 目標槓桿", 2.0, 20.0, 5.0, 0.5, key="v191_lev")
         with c4:
-            if st.button("🧹 重置", key="v191_reset"):
-                for k in [KEY_RES, KEY_BEST, KEY_BT]: st.session_state[k] = None if 'best' in k else []
+            if st.button("🧹 重置全部", key="v191_reset_all"):
+                for k in [KEY_RES, KEY_BEST, KEY_BT]:
+                    st.session_state[k] = None if 'best' in k else []
                 st.rerun()
 
-        if st.button("🚀 執行掃描", type="primary", use_container_width=True, key="v191_scan"):
-            for k in [KEY_RES, KEY_BEST, KEY_BT]: st.session_state[k] = None if 'best' in k else []
-            
-            if sel_con and len(str(sel_con))==6:
-                tdf = df_work[(df_work["contract_date"].astype(str)==sel_con) & (df_work["call_put"]==op_type)]
-                if tdf.empty: st.warning("⚠️ 無此合約資料")
+        # 掃描按鈕
+        if st.button("🚀 智慧掃描", type="primary", use_container_width=True, key="v191_scan"):
+            # 重置狀態
+            st.session_state[KEY_RES] = []
+            st.session_state[KEY_BEST] = None
+            st.session_state[KEY_BT] = None
+
+            if sel_con and len(str(sel_con)) == 6:
+                tdf = df_work[(df_work["contract_date"].astype(str) == sel_con) & 
+                             (df_work["call_put"] == op_type)]
+                
+                if tdf.empty:
+                    st.warning("⚠️ 無此合約交易資料")
                 else:
-                    y, m = int(str(sel_con)[:4]), int(str(sel_con)[4:6])
-                    days = max((date(y,m,15)-latest_date.date()).days, 1)
-                    T = days / 365.0
+                    # 解析到期日
+                    try:
+                        y, m = int(str(sel_con)[:4]), int(str(sel_con)[4:6])
+                        days_to_exp = max((date(y, m, 15) - latest_date.date()).days, 1)
+                        T_years = days_to_exp / 365.0
+                    except Exception as e:
+                        st.error(f"日期解析失敗: {e}")
+                        st.stop()
 
                     raw_results = []
                     for _, row in tdf.iterrows():
                         try:
-                            K, vol, close_p = float(row["strike_price"]), float(row["volume"]), float(row["close"])
-                            if K <= 0: continue
+                            strike = float(row["strike_price"])
+                            volume = float(row["volume"])
+                            close_price = float(row["close"])
                             
+                            if strike <= 0: continue
+
+                            # Black-Scholes Delta
                             try:
-                                r, sigma = 0.02, 0.2
-                                d1 = (np.log(S_current/K)+(r+0.5*sigma**2)*T)/(sigma*np.sqrt(T))
-                                delta = norm.cdf(d1) if op_type=="CALL" else -norm.cdf(-d1)
-                            except: delta = 0.5
+                                r, vola = 0.02, 0.2
+                                d1 = (np.log(S_current / strike) + (r + 0.5 * vola**2) * T_years) / (vola * np.sqrt(T_years))
+                                delta = norm.cdf(d1) if op_type == "CALL" else -norm.cdf(-d1)
+                            except:
+                                delta = 0.5
 
-                            P = close_p if vol > 0 else (abs(delta)*S_current)/target_lev
-                            if P <= 0.5 or abs(delta) < 0.1: continue
-                            lev = (abs(delta)*S_current)/P
+                            # 定價與槓桿
+                            bs_price = (abs(delta) * S_current) / target_lev
+                            price = close_price if volume > 0 else bs_price
+                            
+                            if price <= 0.5 or abs(delta) < 0.1: continue
+                            leverage = (abs(delta) * S_current) / price
 
-                            raw_score = calculate_raw_score_v191(delta, days, vol, S_current, K, op_type)
-                            status = "🟢成交" if vol > 0 else "🔵合理價"
+                            score = calculate_raw_score_v191(delta, days_to_exp, volume, S_current, strike, op_type)
+                            status = "🟢成交" if volume > 0 else "🔵合理價"
 
                             raw_results.append({
-                                "履約價": int(K), "價格": round(P,1), "狀態": status,
-                                "槓桿": lev, "Delta": round(delta,3), "raw_score": raw_score,
-                                "Vol": int(vol), "差距": abs(lev-target_lev),
-                                "合約": sel_con, "類型": op_type, "天數": days
+                                "履約價": int(strike),
+                                "價格": round(price, 1),
+                                "狀態": status,
+                                "槓桿": leverage,
+                                "Delta": round(delta, 3),
+                                "raw_score": score,
+                                "Vol": int(volume),
+                                "差距": abs(leverage - target_lev),
+                                "合約": sel_con,
+                                "類型": op_type,
+                                "天數": days_to_exp
                             })
-                        except: continue
+                        except:
+                            continue
 
                     if raw_results:
                         final_results = micro_expand_scores_v191(raw_results)
                         final_results.sort(key=lambda x: (x['差距'], -x['勝率'], -x['天數']))
+                        
                         st.session_state[KEY_RES] = final_results[:15]
                         st.session_state[KEY_BEST] = final_results[0]
-                        st.success(f"✅ 掃描完成！最佳：{final_results[0]['槓桿']:.1f}x | {final_results[0]['勝率']}%")
-                    else: st.warning("無符合條件合約")
+                        st.success(f"✅ 掃描完成！最佳槓桿：{final_results[0]['槓桿']:.1f}x | 勝率：{final_results[0]['勝率']}%")
+                    else:
+                        st.warning("⚠️ 無符合條件的優質合約")
 
-        # 結果展示
+        # 掃描結果展示
         if st.session_state[KEY_RES]:
-            best = st.session_state[KEY_BEST]
-            st.markdown("---")
-            st.markdown("#### 🏆 **最佳LEAPS CALL推薦**")
+            best_contract = st.session_state[KEY_BEST]
+            st.markdown("─" * 60)
+            st.markdown("#### 🏆 **🔥 最佳LEAPS CALL推薦**")
+            
             st.markdown(f"""
-            `{best['合約']} {best['履約價']} {best['類型']}` **{int(round(best['價格']))}點**  
-            **槓桿 `{best['槓桿']:.1f}x`** | **勝率 `{best['勝率']:.1f}%`** | Delta `{best['Delta']:.3f}` | `{best['天數']}天`
-            """)
+            <div style='background: linear-gradient(90deg, #10b981, #059669); 
+                        color: white; padding: 1rem; border-radius: 12px; text-align: center;'>
+                <h3><b>{best_contract['合約']} {best_contract['履約價']} {best_contract['類型']}</b></h3>
+                <h2>權利金：{int(round(best_contract['價格']))}點</h2>
+                <p>槓桿：<b>{best_contract['槓桿']:.1f}x</b> | 勝率：<b>{best_contract['勝率']:.1f}%</b> | Delta：<b>{best_contract['Delta']}</b></p>
+                <p>到期：<b>{best_contract['天數']}天</b> | 狀態：<span style='color:yellow'>{best_contract['狀態']}</span></p>
+            </div>
+            """, unsafe_allow_html=True)
 
-            with st.expander("📋 Top15結果 (槓桿→勝率→天數)", expanded=True):
-                df_show = pd.DataFrame(st.session_state[KEY_RES])
-                df_show['權利金'] = df_show['價格'].round(0).astype(int)
-                df_show['槓桿'] = df_show['槓桿'].apply(lambda x: f"{x:.1f}x")
-                df_show['Delta'] = df_show['Delta'].apply(lambda x: f"{x:.3f}")
-                df_show['勝率'] = df_show['勝率'].apply(lambda x: f"{x:.1f}%")
-                df_show['天數'] = df_show['天數'].astype(int)
-                st.dataframe(df_show[["合約","履約價","權利金","槓桿","勝率","Delta","天數"]], 
-                           use_container_width=True, hide_index=True)
+            with st.expander(f"📋 Top15完整結果 ({len(st.session_state[KEY_RES])}筆)", expanded=True):
+                df_display = pd.DataFrame(st.session_state[KEY_RES]).copy()
+                df_display['權利金'] = df_display['價格'].round(0).astype(int)
+                df_display['槓桿'] = df_display['槓桿'].apply(lambda x: f"{x:.1f}x")
+                df_display['Delta'] = df_display['Delta'].apply(lambda x: f"{x:.3f}")
+                df_display['勝率'] = df_display['勝率'].apply(lambda x: f"{x:.1f}%")
+                df_display['天數'] = df_display['天數'].astype(int)
+                
+                display_cols = ["合約", "履約價", "權利金", "槓桿", "勝率", "Delta", "天數", "狀態"]
+                st.dataframe(df_display[display_cols], use_container_width=True, hide_index=True)
 
-    # ════ 右欄：Email付費回測 ════════════════════════════════════════════════════
+    # ════ 右欄：Email付費回測 ════════════════════════════════════════════════════════
     with col_backtest:
-        st.markdown("#### 🔒 **貝伊果屋付費回測 (每日3次免費)**")
+        st.markdown("#### 🔒 **貝伊果屋付費回測引擎 (每日3次免費)** 💎")
 
-        # Email輸入+驗證
-        col_email1, col_email2 = st.columns([3,1])
-        with col_email1:
-            email_input = st.text_input("📧 開通Email", 
-                                       value=st.session_state[KEY_EMAIL],
-                                       placeholder="your@email.com",
-                                       help="Threads (@beigou0427) 專屬更新 + v20 Beta",
-                                       key="email_v191_input")
-        with col_email2:
-            if st.button("✅ 開通", type="secondary", key="auth_v191") and email_input:
-                if '@' in email_input and '.' in email_input.split('@')[-1]:
-                    st.session_state[KEY_EMAIL] = email_input
-                    st.session_state[KEY_USES] = 0  # 重置額度
-                    st.success(f"🎉 {email_input} 開通成功！")
+        # ── Email授權區 ──────────────────────────────────────────────────────────────
+        col_email_input, col_email_btn = st.columns([3, 1])
+        with col_email_input:
+            email_entered = st.text_input(
+                "📧 開通授權Email", 
+                value=st.session_state[KEY_EMAIL],
+                placeholder="your@email.com (Threads專屬更新)",
+                help="輸入後點「開通」→ 每日3次真實回測 + v20 Beta資格",
+                key="email_entry_v191"
+            )
+        with col_email_btn:
+            if st.button("✅ 立即開通", type="secondary", use_container_width=True, key="email_auth_v191"):
+                if '@' in email_entered and '.' in email_entered.split('@')[-1]:
+                    st.session_state[KEY_EMAIL] = email_entered
+                    st.session_state[KEY_USES] = 0  # 重置今日額度
+                    st.success(f"🎉 {email_entered} 授權成功！剩餘3/3次")
                     st.balloons()
                     st.rerun()
                 else:
-                    st.error("❌ 無效Email")
+                    st.error("❌ Email格式錯誤 (需包含@和.)")
 
-        email_valid = bool(st.session_state[KEY_EMAIL])
-        daily_limit = 3
-        uses_left = daily_limit - st.session_state[KEY_USES] if email_valid else 0
+        # Email狀態檢查
+        email_authorized = bool(st.session_state[KEY_EMAIL] and '@' in st.session_state[KEY_EMAIL])
+        daily_quota = 3
+        remaining_uses = daily_quota - st.session_state[KEY_USES] if email_authorized else 0
 
-        if not email_valid:
-            st.warning("🔒 **請輸入Email開通**")
+        if not email_authorized:
+            st.warning("🔒 **請輸入Email開通付費功能**")
             st.markdown("""
-            **開通好處**：
-            - 真實TAIEX 365天回測
-            - Threads策略每日更新
-            - 貝伊果屋v20.0測試資格
+            **開通立即獲得**：
+            • 真實TAIEX 365天歷史回測
+            • Sharpe比率 + 勝率 + 最大回撤
+            • Threads (@beigou0427) 每日策略
+            • 貝伊果屋v20.0封閉測試資格
             """)
+        elif remaining_uses <= 0:
+            st.error("⏰ **今日額度已用完** | 明天12:00自動重置")
+            col_upgrade_a, col_upgrade_b = st.columns(2)
+            with col_upgrade_a:
+                if st.button("💎 升級無限版", type="primary", key="upgrade_infinite_v191"):
+                    st.info("聯絡 @beigou0427 Threads 洽談企業版")
+            with col_upgrade_b:
+                st.markdown("[📱 Threads訂閱](https://threads.net/@beigou0427)")
         else:
-            st.success(f"✅ 已授權：{st.session_state[KEY_EMAIL]} | 剩餘 **{uses_left}**/3 次")
-            
-            if uses_left <= 0:
-                st.error("⏰ **今日額度已用完** | 明天重置")
-                col_upgrade1, col_upgrade2 = st.columns(2)
-                with col_upgrade1:
-                    if st.button("💎 無限版升級", type="primary", key="upgrade_v191"):
-                        st.info("聯絡 @beigou0427 Threads 洽談付費版")
-                with col_upgrade2:
-                    st.markdown("[Threads訂閱](https://threads.net/@beigou0427)")
-            else:
-                # 回測控制
-                best_now = st.session_state.get(KEY_BEST)
-                def_lev = best_now['槓桿'] if best_now else 5.0
-                def_days = best_now.get('天數', 180) if best_now else 180
+            # ── 授權成功：顯示回測控制 ────────────────────────────────
+            st.success(f"✅ 已授權：{st.session_state[KEY_EMAIL]} | **剩餘 {remaining_uses}/3 次**")
 
-                back_lev = st.slider("回測槓桿", 2.0, 20.0, round(def_lev,1), 0.5, key="v191_lev")
-                back_days = st.slider("回測天數", 30, 500, min(def_days,365), 30, key="v191_days")
+            # 自動帶入最佳合約參數
+            best_available = st.session_state.get(KEY_BEST)
+            default_leverage = best_available['槓桿'] if best_available else 5.0
+            default_duration = best_available.get('天數', 180) if best_available else 180
 
-                if st.button(f"🔄 執行回測 (剩餘{uses_left}/3)", type="primary", 
-                           use_container_width=True, key="run_bt_v191"):
-                    with st.spinner("貝伊果屋AI回測引擎..."):
-                        bt_df, metrics = backtest_taiex_leverage_v191(back_lev, back_days, FINMIND_TOKEN)
+            # 回測參數滑桿 (key已修復衝突)
+            backtest_leverage = st.slider(
+                "🎯 回測槓桿", 2.0, 20.0, round(default_leverage, 1), 0.5,
+                key="v191_backtest_leverage"  # ✅ 獨立key
+            )
+            backtest_days = st.slider(
+                "📅 回測天數", 30, 500, min(default_duration, 365), 30,
+                key="v191_backtest_days"  # ✅ 獨立key
+            )
+
+            # 執行回測按鈕
+            col_run1, col_run2 = st.columns([3, 1])
+            with col_run1:
+                if st.button(
+                    f"🔄 貝伊果屋回測 (剩餘{remaining_uses}/3)", 
+                    type="primary", use_container_width=True, 
+                    key="execute_backtest_v191"
+                ):
+                    with st.spinner("🚀 專業回測引擎啟動中..."):
+                        bt_chart_data, bt_metrics = backtest_taiex_leverage_v191(
+                            backtest_leverage, backtest_days, FINMIND_TOKEN
+                        )
+                        
+                        # 扣除額度並儲存結果
                         st.session_state[KEY_USES] += 1
                         st.session_state[KEY_BT] = {
-                            'df': bt_df, 'metrics': metrics, 
+                            'data': bt_chart_data,
+                            'metrics': bt_metrics,
                             'email': st.session_state[KEY_EMAIL],
-                            'uses_left': daily_limit - st.session_state[KEY_USES]
+                            'remaining': daily_quota - st.session_state[KEY_USES],
+                            'params': {'lev': backtest_leverage, 'days': backtest_days}
                         }
-                        st.success("✅ 回測完成！")
+                        st.success("✅ 回測完成！結果已儲存")
+            
+            with col_run2:
+                if st.button("📱 Threads更新", key="threads_update_v191"):
+                    st.toast(f"已記錄 {st.session_state[KEY_EMAIL]} 到貝伊果屋VIP名單")
 
-                # 結果展示
-                if st.session_state[KEY_BT]:
-                    bt_data = st.session_state[KEY_BT]
-                    m = bt_data['metrics']
+            # ── 回測結果展示 ──────────────────────────────────────────────────────────
+            if st.session_state[KEY_BT]:
+                bt_result = st.session_state[KEY_BT]
+                metrics_result = bt_result['metrics']
 
-                    c_m1, c_m2 = st.columns(2)
-                    with c_m1:
-                        st.metric(f"{m['lev']:.1f}x 總報酬", f"{m['total_lev']:.1%}", 
-                                 delta=f"大盤{m['total_tai']:.1%}")
-                    with c_m2:
-                        st.metric("Sharpe比率", f"{m['sharpe']:.2f}", 
-                                 delta="💎優質" if m['sharpe']>0.5 else "⚠️")
-
-                    c_m3, c_m4 = st.columns(2)
-                    with c_m3: st.metric("日勝率", f"{m['win_rate']:.1f}%")
-                    with c_m4: st.metric("最大回撤", f"{m['maxdd']:.1f}%")
-
-                    st.line_chart(
-                        bt_data['df'].set_index('date')[['cum_tai','cum_lev']]
-                        .rename(columns={'cum_tai':'大盤','cum_lev':f'{m["lev"]:.1f}x LEAPS'}),
-                        use_container_width=True
+                # 4指標儀表板
+                col_kpi1, col_kpi2 = st.columns(2)
+                with col_kpi1:
+                    st.metric(
+                        f"{metrics_result['lev']:.1f}x 總報酬",
+                        f"{metrics_result['total_lev']:.1%}",
+                        delta=f"大盤 {metrics_result['total_tai']:.1%}"
                     )
-                    st.caption(f"📊 {m['trades']}交易日 | Theta衰減0.03%/日 | 授權:{bt_data['email']}")
+                with col_kpi2:
+                    st.metric(
+                        "Sharpe比率", f"{metrics_result['sharpe']:.2f}",
+                        delta="💎 優質策略" if metrics_result['sharpe'] > 0.5 else "⚠️ 需優化"
+                    )
 
-                    col_clr1, col_clr2 = st.columns(2)
-                    with col_clr1:
-                        if st.button("🗑️ 清除回測", key="clr_bt_v191"):
-                            st.session_state[KEY_BT] = None; st.rerun()
-                    with col_clr2:
-                        st.caption(f"剩餘額度：{bt_data['uses_left']}/3")
+                col_kpi3, col_kpi4 = st.columns(2)
+                with col_kpi3:
+                    st.metric("日勝率", f"{metrics_result['win_rate']:.1f}%")
+                with col_kpi4:
+                    st.metric("最大回撤", f"{metrics_result['maxdd']:.1f}%")
 
-    # ── 底部商業導流 ─────────────────────────────────────────────────────────────
-    st.markdown("─" * 80)
-    st.markdown("#### 💎 **貝伊果屋付費版功能對比**")
+                # 累積報酬走勢圖
+                chart_data = bt_result['data'].set_index('date')
+                chart_data.columns = ['大盤累積報酬', f'{metrics_result["lev"]:.1f}x LEAPS']
+                st.line_chart(chart_data, use_container_width=True)
+
+                st.caption(f"""
+                📊 回測 {metrics_result['trades']} 個交易日 | 
+                Theta每日衰減 0.03% | 
+                授權Email：{bt_result['email']} | 
+                剩餘額度：{bt_result['remaining']}/3
+                """)
+
+                # 操作按鈕
+                col_action1, col_action2 = st.columns(2)
+                with col_action1:
+                    if st.button("🗑️ 清除回測結果", key="clear_bt_result_v191"):
+                        st.session_state[KEY_BT] = None
+                        st.rerun()
+                with col_action2:
+                    st.caption("⚙️ 重跑不扣額度")
+
+    # ── 底部商業導流與免責聲明 ─────────────────────────────────────────────────────
+    st.markdown("─" * 90)
+    st.markdown("#### 💎 **貝伊果屋功能對比表**")
     
-    col_free, col_paid = st.columns(2)
-    with col_free:
-        st.markdown("**🆓 免費版**")
-        st.markdown("- 槓桿掃描\n- 微觀勝率\n- BS定價\n- Top15排序")
-    with col_paid:
-        st.markdown("**💎 付費版 (Email開通)**")
-        st.markdown("- 真實TAIEX回測\n- Sharpe/勝率/DD\n- 每日3次免費\n- Threads更新")
-
+    feature_comparison = """
+    | 功能 | 免費版 | 付費版(Email) |
+    |------|--------|---------------|
+    | 槓桿掃描 | ✅ | ✅ |
+    | 微觀勝率 | ✅ | ✅ |
+    | BS定價 | ✅ | ✅ |
+    | TAIEX回測 | ❌ | ✅ |
+    | Sharpe/DD | ❌ | ✅ |
+    | 每日額度 | - | 3次免費 |
+    | Threads更新 | ❌ | ✅ |
+    | v20 Beta | ❌ | ✅ |
+    """
+    st.markdown(feature_comparison)
+    
     st.markdown("---")
-    st.caption("""
-    **貝伊果屋 (@beigou0427)** | v19.1 2026/3/10  
-    ⚠️ 僅供學習參考，非投資建議 | 實際交易請評估風險
+    st.markdown("""
+    **貝伊果屋 (@beigou0427)** | Build: 2026/3/10 v19.1  
+    💬 Threads每日LEAPS策略 | 🚀 v20.0即將上線(12因子+AI供應鏈)
+    ⚠️ **僅供學習研究，非投資建議** | 實際交易請諮詢專業顧問
     """)
+    st.caption("© 貝伊果屋 2026 | mintung.chen@beigou.tw")
