@@ -177,7 +177,6 @@ with st.spinner("🚀 啟動財富引擎..."):
     except:
         S_current, df_latest, latest_date, ma20, ma60 = 23000.0, pd.DataFrame(), pd.to_datetime(date.today()), 22800.0, 22500.0
         
-df_taiex = get_taiex_history(FINMIND_TOKEN)  # 加這行
 
 
 # 🔥 歷史數據載入（回測用）
@@ -380,6 +379,7 @@ with tabs[0]:
     **真槓桿模擬**：台指漲跌×Delta×槓桿 - 時間衰減 | 內嵌60日數據
     **綠燈**：勝率>55% + 夏普>0.5 → 可考慮
     """)
+
 
 
 
