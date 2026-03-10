@@ -181,20 +181,6 @@ df_taiex = get_taiex_history(FINMIND_TOKEN)  # 加這行
 
 
 # 🔥 歷史數據載入（回測用）
-# 🔥 台指歷史數據（槓桿回測用）
-@st.cache_data(ttl=3600)
-def get_taiex_history(token):
-    from FinMind.data import DataLoader
-    dl = DataLoader()
-    if token: dl.login_by_token(api_token=token)
-    start_date = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
-    try:
-        df = dl.taiwan_stock_daily("TAIEX", start_date=start_date)
-        return df
-    except:
-        return pd.DataFrame()
-
-df_taiex = get_taiex_history(FINMIND_TOKEN)  # ✅ 全域可用
 
 # =========================================
 # 4. 主介面 & 市場快報
@@ -497,5 +483,6 @@ with tabs[0]:
     - **建議**：槓桿5-10x + 歷史勝率>50% + 遠月合約
     """)
     st.caption("📊 **排序邏輯**：槓桿差距 → 微觀勝率 → 到期天數 → 歷史回測")
+
 
 
