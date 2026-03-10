@@ -253,16 +253,16 @@ tabs = st.tabs(tabnames)
 with tabs[0]:
     KEY_RES = "results_lev_v185"
     KEY_BEST = "best_lev_v185"
-    KEY_PF = "portfolio_lev"
+    KEY_BACKTEST = "backtest_lev_v185"  # 新增回測結果key
 
     if KEY_RES not in st.session_state: st.session_state[KEY_RES] = []
     if KEY_BEST not in st.session_state: st.session_state[KEY_BEST] = None
-    if KEY_PF not in st.session_state: st.session_state[KEY_PF] = []
+    if KEY_BACKTEST not in st.session_state: st.session_state[KEY_BACKTEST] = None
 
-    st.markdown("### ♟️ **專業戰情室 (槓桿篩選 + 微觀勝率 + LEAPS CALL)**")
-    col_search, col_portfolio = st.columns([1.3, 0.7])
+    st.markdown("### ♟️ **專業戰情室 (槓桿篩選 + 微觀勝率 + LEAPS CALL 回測)**")
+    col_search, col_backtest = st.columns([1.3, 0.7])
 
-    # 1. 原始評分 (綜合因子)
+    # 1. 原始評分 (綜合因子) - 保持原樣
     def calculate_raw_score(delta, days, volume, S, K, op_type):
         s_delta = abs(delta) * 100.0
         
@@ -296,6 +296,44 @@ with tabs[0]:
             results[i]['勝率'] = round(score, 1)
         return results
 
+    # 🔴 新增：回測函數 (模擬持有表現)
+    def backtest_contract(df_historical, contract_info, hold_days=90):
+        """回測單一合約表現，基於歷史數據模擬"""
+        try:
+            contract = contract_info['合約']
+            strike = contract_info['履約價']
+            op_type = contract_info['類型']
+            
+            # 找歷史相同合約的價格變化
+            hist_data = df_historical[
+                (df_historical['contract_date'].astype(str) == contract) & 
+                (df_historical['call_put'] == op_type) & 
+                (df_historical['strike_price'] == strike)
+            ]
+            
+            if len(hist_data) < 2: 
+                return {"win_rate": 0, "avg_return": 0, "trades": 0, "success": []}
+            
+            returns = []
+            for i in range(len(hist_data)-1):
+                entry_price = hist_data.iloc[i]['close']
+                exit_price = hist_data.iloc[i+1]['close']
+                ret = (exit_price - entry_price) / entry_price * 100
+                returns.append(ret)
+            
+            success_rate = len([r for r in returns if r > 0]) / len(returns) * 100 if returns else 0
+            avg_return = np.mean(returns) if returns else 0
+            
+            return {
+                "win_rate": round(success_rate, 1),
+                "avg_return": round(avg_return, 1),
+                "trades": len(returns),
+                "max_return": round(max(returns) if returns else 0, 1),
+                "max_loss": round(min(returns) if returns else 0, 1)
+            }
+        except:
+            return {"win_rate": 0, "avg_return": 0, "trades": 0}
+
     with col_search:
         st.markdown("#### 🔍 **槓桿掃描 (LEAPS CALL 優化)**")
         
@@ -313,7 +351,6 @@ with tabs[0]:
         with c2:
             contracts = df_work[df_work['call_put']==op_type]['contract_date'].dropna()
             available = sorted(contracts[contracts.astype(str).str.len()==6].unique())
-            # ✅ 預設遠月合約 (LEAPS CALL 偏好)
             default_idx = len(available) - 1 if available else 0
             sel_con = st.selectbox("月份", available if available else [""], 
                                  index=default_idx, key="v185_con")
@@ -323,11 +360,13 @@ with tabs[0]:
             if st.button("🧹 重置", key="v185_reset"):
                 st.session_state[KEY_RES] = []
                 st.session_state[KEY_BEST] = None
+                st.session_state[KEY_BACKTEST] = None
                 st.rerun()
 
         if st.button("🚀 執行掃描", type="primary", use_container_width=True, key="v185_scan"):
             st.session_state[KEY_RES] = []
             st.session_state[KEY_BEST] = None
+            st.session_state[KEY_BACKTEST] = None
             
             if sel_con and len(str(sel_con))==6:
                 tdf = df_work[(df_work["contract_date"].astype(str)==sel_con) & (df_work["call_put"]==op_type)]
@@ -367,7 +406,6 @@ with tabs[0]:
                             
                             if abs(delta) < 0.1: continue
 
-                            # 1. 原始分
                             raw_score = calculate_raw_score(delta, days, vol, S_current, K, op_type)
                             status = "🟢成交" if vol > 0 else "🔵合理"
 
@@ -382,15 +420,12 @@ with tabs[0]:
                                 "差距": abs(lev - target_lev),
                                 "合約": sel_con, 
                                 "類型": op_type,
-                                "天數": days  # 新增，用於排序
+                                "天數": days
                             })
                         except: continue
                     
                     if raw_results:
-                        # 2. 微觀展開勝率
                         final_results = micro_expand_scores(raw_results)
-                        
-                        # 3. 排序：優先找槓桿最接近的，其次看勝率，最後天數（遠月優先）
                         final_results.sort(key=lambda x: (x['差距'], -x['勝率'], -x['天數']))
                         
                         st.session_state[KEY_RES] = final_results[:15]
@@ -412,13 +447,13 @@ with tabs[0]:
                 """)
             with cB:
                 st.write("")
-                if st.button("➕ 加入", key="add_pf_v185"):
-                    exists = any(p['履約價'] == best['履約價'] and 
-                                 p['合約'] == best['合約'] for p in st.session_state[KEY_PF])
-                    if not exists:
-                        st.session_state[KEY_PF].append(best)
-                        st.toast("✅ 已加入投組")
-                    else: st.toast("⚠️ 已存在")
+                if st.button("📊 回測最佳", key="backtest_best_v185"):
+                    if 'df_historical' in globals() and not df_historical.empty:
+                        bt_result = backtest_contract(df_historical, best)
+                        st.session_state[KEY_BACKTEST] = bt_result
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ 需要歷史數據進行回測")
 
             with st.expander("📋 搜尋結果 (依槓桿→勝率→天數排序)", expanded=True):
                 df_show = pd.DataFrame(st.session_state[KEY_RES]).copy()
@@ -432,48 +467,47 @@ with tabs[0]:
                 cols = ["合約", "履約價", "權利金", "槓桿", "勝率", "天數", "差距"]
                 st.dataframe(df_show[cols], use_container_width=True, hide_index=True)
 
-    with col_portfolio:
-        st.markdown("#### 💼 **LEAPS CALL 投組**")
-        if st.session_state[KEY_PF]:
-            pf = pd.DataFrame(st.session_state[KEY_PF])
-            total = pf['價格'].sum() * 50
-            avg_win = pf['勝率'].mean()
-            avg_lev = pf['槓桿'].mean()
+    with col_backtest:
+        st.markdown("#### 📈 **LEAPS CALL 回測**")
+        if st.session_state[KEY_BACKTEST]:
+            bt = st.session_state[KEY_BACKTEST]
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("歷史勝率", f"{bt['win_rate']}%")
+            with col2:
+                st.metric("平均報酬", f"{bt['avg_return']}%")
+            with col3:
+                st.metric("交易次數", f"{bt['trades']}")
             
-            st.metric("總權利金", f"${int(total):,}")
-            st.caption(f"{len(pf)}口 | Avg槓桿 {avg_lev:.1f}x | Avg勝率 {avg_win:.1f}%")
+            st.caption(f"最大盈虧: +{bt['max_return']}%, {bt['max_loss']}%")
             
-            pf_s = pf.copy()
-            pf_s['權利金'] = pf_s['價格'].round(0).astype(int)
-            pf_s['Delta'] = pf_s['Delta'].map(lambda x: f"{float(x):.2f}")
-            pf_s['勝率'] = pf_s['勝率'].map(lambda x: f"{float(x):.1f}%")
-            pf_s['槓桿'] = pf_s['槓桿'].map(lambda x: f"{x:.1f}x")
-            
-            st.dataframe(pf_s[["合約", "履約價", "權利金", "槓桿", "勝率"]], 
-                         use_container_width=True, hide_index=True)
-            
-            c_clr, c_dl = st.columns(2)
-            with c_clr:
-                if st.button("🗑️ 清空投組", key="clr_pf_v185"):
-                    st.session_state[KEY_PF] = []
+            if st.button("🔄 重新回測", key="retest_v185"):
+                st.session_state[KEY_BACKTEST] = None
+                st.rerun()
+        else: 
+            st.info("💡 點擊「回測最佳」查看歷史表現")
+            if st.button("📊 回測前3名", key="backtest_top3_v185"):
+                if 'df_historical' in globals() and st.session_state[KEY_RES]:
+                    top3_results = []
+                    for contract in st.session_state[KEY_RES][:3]:
+                        bt_result = backtest_contract(df_historical, contract)
+                        contract['backtest'] = bt_result
+                        top3_results.append(contract)
+                    st.session_state[KEY_BACKTEST] = top3_results
                     st.rerun()
-            with c_dl:
-                st.download_button("📥 CSV匯出", pf.to_csv(index=False).encode('utf-8'), 
-                                   "LEAPs_call_pf_v185.csv", key="dl_pf_v185")
-        else: st.info("💡 請先掃描並加入合約")
 
-    # ✅ LEAPS CALL 介紹區塊
+    # ✅ LEAPS CALL 介紹區塊 (更新說明)
     st.markdown("---")
-    st.markdown("#### 📚 **LEAPS / LEAPS CALL 策略簡介**")
+    st.markdown("#### 📚 **LEAPS / LEAPS CALL 策略 + 回測驗證**")
     st.markdown("""
     **LEAPS CALL (長期看漲選擇權)**：
     - 到期日 > 6個月，時間衰減緩慢，適合長期看多標的（如AI、指數）
     - **優勢**：高槓桿、低成本替代現股，時間價值損耗少
-    - **本系統優化**：預設遠月合約 + 槓桿篩選，優先推薦深度價內/價平合約
+    - **回測功能**：驗證歷史勝率、平均報酬、最大盈虧
     - **建議情境**：波段操作、避開短期震盪、建構低成本多頭部位
     """)
     
-    st.caption("📊 **操作邏輯**：優先槓桿最接近 → 最高微觀勝率 → 最遠天數。建議搭配遠月 LEAPS CALL 降低時間風險。")
+    st.caption("📊 **操作邏輯**：優先槓桿最接近 → 最高微觀勝率 → 最遠天數 → 歷史回測驗證。")
 
 
 
