@@ -232,153 +232,145 @@ tabs = st.tabs(tabnames)
 # ✅ 完整 Tab 0: 槓桿篩選 + LEAPS CALL 回測版 v185
 # ==========================
 with tabs[0]:
-    # 初始化
-    if 'results_lev_v187' not in st.session_state: st.session_state['results_lev_v187'] = []
-    if 'best_lev_v187' not in st.session_state: st.session_state['best_lev_v187'] = None
-    if 'backtest_lev_v187' not in st.session_state: st.session_state['backtest_lev_v187'] = None
+    # State
+    keys = ['results_lev_v188','best_lev_v188','backtest_lev_v188']
+    for k in keys: 
+        if k not in st.session_state: st.session_state[k] = None if 'best' in k else []
     
-    KEY_RES, KEY_BEST, KEY_BT = 'results_lev_v187', 'best_lev_v187', 'backtest_lev_v187'
-    
-    st.markdown("### ♟️ **LEAPS CALL 槓桿戰情室**")
-    col1, col2 = st.columns([1.3, 0.7])
+    st.markdown("### ♟️ **LEAPS槓桿戰情室**")
+    col_left, col_right = st.columns([1.3, 0.7])
 
-    # 核心函數
-    def calc_score(delta, days, vol, S, K, optype):
-        sdelta = abs(delta)*100
-        m = (S-K)/S if optype=="CALL" else (K-S)/S
-        smoney = max(-10,min(m*200,10))+50
-        stime, svol = min(days/90*100,100), min(vol/5000*100,100)
-        return 0.4*sdelta + 0.2*smoney + 0.2*stime + 0.2*svol
+    # Functions
+    def calc_score(delta,days,vol,S,K,optype):
+        sd=abs(delta)*100; m=(S-K)/S if optype=="CALL" else (K-S)/S
+        sm=max(-10,min(m*200,10))+50; st=min(days/90*100,100); sv=min(vol/5000*100,100)
+        return 0.4*sd+0.2*sm+0.2*st+0.2*sv
 
-    def micro_winrate(results):
-        if not results: return []
-        results = sorted(results, key=lambda x: x['raw_score'], reverse=True)
-        n, topn = len(results), max(1, int(0.4*n))
+    def micro_winrate(res):
+        if not res: return []
+        res=sorted(res,key=lambda x:x['raw_score'],reverse=True)
+        n,topn=len(res),max(1,int(0.4*n))
         for i in range(n):
-            if i < topn: score = 95-(i/(topn-1))*5 if topn>1 else 95
-            else: 
-                rem = n-topn; idx = i-topn
-                score = 85-(idx/(rem-1))*70 if rem>1 else 15
-            results[i]['勝率'] = round(score,1)
-        return results
+            if i<topn: score=95-(i/(topn-1))*5 if topn>1 else 95
+            else: rem,idx=n-topn,i-topn; score=85-(idx/(rem-1))*70 if rem>1 else 15
+            res[i]['勝率']=round(score,1)
+        return res
 
-    # 🔥 內嵌台指數據 + 槓桿回測
-    @st.cache_data(ttl=1800)
-    def get_taiex_mock():
-        """內嵌模擬台指數據，避免API依賴"""
-        dates = pd.date_range('2025-01-01', periods=252, freq='B')  # 交易日
-        prices = 23000 + np.cumsum(np.random.normal(0, 150, 252))  # 隨機漫步
-        df = pd.DataFrame({'date':dates, 'close':prices})
-        df['ret'] = df['close'].pct_change().fillna(0)
-        return df.tail(60)  # 最近60天
+    # ✅ 內嵌台指數據
+    @st.cache_data
+    def get_mock_taiex(): 
+        dates=pd.date_range('2025-06-01',periods=60,freq='B')
+        prices=23000+np.cumsum(np.random.normal(0,120,60))
+        df=pd.DataFrame({'close':prices},index=dates)
+        df['ret']=df['close'].pct_change().fillna(0)
+        return df
 
-    df_taiex = get_taiex_mock()  # ✅ 內嵌自含
+    df_taiex = get_mock_taiex()
 
-    def leverage_backtest(df_idx, contract):
-        delta, lev = abs(contract['Delta']), contract['槓桿']
-        df_rec = df_idx.copy()
-        leaps_rets = []
-        for i in range(1, min(20, len(df_rec))):
-            mret = df_rec['ret'].iloc[-i]
-            lret = mret * delta * lev - 0.0005  # 槓桿+衰減
-            leaps_rets.append(lret*100)
-        if not leaps_rets: return dict(win_rate=0,avg_return=0,sharpe=0,trades=0,lev=lev)
-        wr = sum(r>0 for r in leaps_rets)/len(leaps_rets)*100
-        ar, vol = np.mean(leaps_rets), np.std(leaps_rets)
-        sh = ar/vol if vol>0.001 else 0
-        return dict(win_rate=round(wr,1),avg_return=round(ar,2),sharpe=round(sh,2),trades=len(leaps_rets),lev=round(lev,1))
+    def lev_backtest(df,con):
+        d,a=abs(con['Delta']),con['槓桿']
+        rets=[]
+        for i in range(1,min(20,len(df))):
+            mr=df['ret'].iloc[-i]
+            lr=mr*d*a-0.0005
+            rets.append(lr*100)
+        if not rets: return dict(win_rate=0,avg_return=0,sharpe=0,trades=0,lev=a)
+        wr=sum(r>0 for r in rets)/len(rets)*100
+        ar,vl=np.mean(rets),np.std(rets)
+        sh=ar/vl if vl>0.001 else 0
+        return dict(win_rate=round(wr,1),avg_return=round(ar,2),sharpe=round(sh,2),trades=len(rets),lev=round(a,1))
 
-    # 左側掃描
-    with col1:
-        st.markdown("#### 🔍 **槓桿掃描**")
-        if df_latest.empty: st.error("無資料"); st.stop()
+    # 掃描面板
+    with col_left:
+        st.markdown("#### 🔍 **掃描**")
+        if df_latest.empty: st.error("無資料");st.stop()
         
-        dfw = df_latest.copy()
-        for c in ['close','volume','strike_price']: dfw[c] = pd.to_numeric(dfw[c], errors='coerce').fillna(0)
-        dfw['call_put'] = dfw['call_put'].str.upper().str.strip()
+        dfw=df_latest.copy()
+        for c in ['close','volume','strike_price']:dfw[c]=pd.to_numeric(dfw[c],errors='coerce').fillna(0)
+        dfw['call_put']=dfw['call_put'].str.upper().str.strip()
 
-        c1,c2,c3,c4 = st.columns([1,1,1,0.6])
+        c1,c2,c3,c4=st.columns([1,1,1,0.6])
         with c1: 
-            mode = st.selectbox("方向", ["📈 CALL","📉 PUT"], key="dir_v187")
-            optype = "CALL" if "CALL" in mode else "PUT"
+            mode=st.selectbox("方向",["📈CALL","📉PUT"],key="d_v188")
+            tp="CALL" if "CALL" in mode else "PUT"
         with c2:
-            conts = dfw[dfw['call_put']==optype]['contract_date'].dropna()
-            avail = sorted(conts[conts.astype(str).str.len()==6].unique())
-            selcon = st.selectbox("月份", avail if avail else [""], index=len(avail)-1 if avail else 0, key="con_v187")
-        with c3: tlev = st.slider("目標槓桿", 2, 20, 5, 0.5, key="lev_v187")
-        with c4:
-            if st.button("🧹", key="rst_v187"):
-                for k in [KEY_RES, KEY_BEST, KEY_BT]: st.session_state[k] = [] if k!=KEY_BEST else None
+            cons=dfw[dfw.call_put==tp].contract_date.dropna()
+            av=sorted(cons[cons.astype(str).str.len()==6].unique())
+            sc=st.selectbox("月份",av if av else [""],index=len(av)-1 if av else 0,key="c_v188")
+        with c3: 
+            tl=st.slider("槓桿",2.0,20.0,5.0,0.5,key="l_v188")  # ✅ 浮點修復
+        with c4: 
+            if st.button("🧹",key="r_v188"):
+                for k in keys: st.session_state[k]=None if 'best' in k else []
                 st.rerun()
 
-        if st.button("🚀 掃描", type="primary", key="scan_v187"):
-            st.session_state[KEY_RES] = st.session_state[KEY_BEST] = st.session_state[KEY_BT] = None
-            if selcon and len(str(selcon))==6:
-                tdf = dfw[(dfw.contract_date.astype(str)==selcon) & (dfw.call_put==optype)]
+        if st.button("🚀",type="primary",key="s_v188"):
+            st.session_state['results_lev_v188']=st.session_state['best_lev_v188']=st.session_state['backtest_lev_v188']=None
+            if sc and len(str(sc))==6:
+                tdf=dfw[(dfw.contract_date.astype(str)==sc)&(dfw.call_put==tp)]
                 if not tdf.empty:
-                    y,m = int(str(selcon)[:4]),int(str(selcon)[4:])
-                    days = max((date(y,m,15)-latest_date.date()).days,1); T=days/365
+                    y,m=int(str(sc)[:4]),int(str(sc)[4:])
+                    days=max((date(y,m,15)-latest_date.date()).days,1)
+                    T,T1=days/365,0.02+0.5*0.04
                     
-                    res = []
-                    for _,r in tdf.iterrows():
-                        K,V,C = float(r.strike_price),float(r.volume),float(r.close)
-                        if K<=0 or C<=0.5: continue
+                    rslts=[]
+                    for _,rw in tdf.iterrows():
+                        K,V,C=float(rw.strike_price),float(rw.volume),float(rw.close)
+                        if K<=0 or C<=0.5:continue
                         try:
-                            d1 = (np.log(S_current/K)+(0.02+0.1*T)/(0.2*np.sqrt(T)))
-                            delta = norm.cdf(d1) if optype=="CALL" else -norm.cdf(-d1)
-                        except: delta=0.5
-                        if abs(delta)<0.1: continue
-                        P = C if V>0 else C
-                        lev = abs(delta)*S_current/P
-                        score = calc_score(delta,days,V,S_current,K,optype)
-                        res.append(dict(履約價=int(K),價格=P,槓桿=lev,Delta=delta,raw_score=score,
-                                      差距=abs(lev-tlev),合約=selcon,類型=optype,天數=days))
+                            d1=(np.log(S_current/K)+T1*T)/(0.2*np.sqrt(T))
+                            dl=norm.cdf(d1) if tp=="CALL" else -norm.cdf(-d1)
+                        except:dl=0.5
+                        if abs(dl)<0.1:continue
+                        P=C if V>0 else C
+                        lv=abs(dl)*S_current/P
+                        sc=calc_score(dl,days,V,S_current,K,tp)
+                        rslts.append(dict(履約價=int(K),價格=P,槓桿=lv,Delta=dl,raw_score=sc,
+                                        差距=abs(lv-tl),合約=sc,類型=tp,天數=days))
                     
-                    if res:
-                        final = micro_winrate(res)
-                        final.sort(key=lambda x:(x['差距'],-x['勝率'],-x['天數']))
-                        st.session_state[KEY_RES], st.session_state[KEY_BEST] = final[:15], final[0]
-                        st.success(f"✅ 最佳 {final[0]['槓桿']:.1f}x")
+                    if rslts:
+                        fnl=micro_winrate(rslts)
+                        fnl.sort(key=lambda x:(x['差距'],-x['勝率'],-x['天數']))
+                        st.session_state['results_lev_v188']=fnl[:15]
+                        st.session_state['best_lev_v188']=fnl[0]
+                        st.success(f"✅ {fnl[0]['槓桿']:.1f}x")
             st.rerun()
 
-        if st.session_state[KEY_RES]:
-            best = st.session_state[KEY_BEST]
+        if st.session_state['results_lev_v188']:
+            bst=st.session_state['best_lev_v188']
             st.markdown("---")
-            colA,colB = st.columns([2,1])
-            with colA:
-                st.markdown("#### 🏆 **最佳**")
-                st.markdown(f"`{best['合約']} {best['履約價']}C` **{int(best['價格'])}**")
-                st.caption(f"{best['槓桿']:.1f}x | {best['勝率']}% | {best['天數']}天")
-            with colB:
-                if st.button("📊 回測", key="btbtn_v187"):
-                    bt = leverage_backtest(df_taiex, best)
-                    st.session_state[KEY_BT] = bt
+            ca,cb=st.columns([2,1])
+            with ca:
+                st.markdown("#### 🏆 **推薦**")
+                st.markdown(f"`{bst['合約']}{bst['履約價']}C` **{int(bst['價格'])}**")
+                st.caption(f"{bst['槓桿']:.1f}x | {bst['勝率']}%")
+            with cb:
+                if st.button("📊回測",key="bt_v188"):
+                    bt=lev_backtest(df_taiex,bst)
+                    st.session_state['backtest_lev_v188']=bt
                     st.rerun()
 
-            with st.expander("結果", expanded=True):
-                dfs = pd.DataFrame(st.session_state[KEY_RES])
-                dfs['權利金'] = dfs['價格'].round().astype(int)
-                dfs['槓桿'] = dfs['槓桿'].map(lambda x: f"{x:.1f}x")
-                st.dataframe(dfs[['合約','履約價','權利金','槓桿','勝率','天數']], hide_index=True)
+            with st.expander("結果"):
+                dfp=pd.DataFrame(st.session_state['results_lev_v188'])
+                dfp['權利金']=dfp['價格'].round().astype(int)
+                dfp['槓桿']=dfp['槓桿'].map(lambda x:f"{x:.1f}x")
+                st.dataframe(dfp[['合約','履約價','權利金','槓桿','勝率']],hide_index=True)
 
-    # 右側回測
-    with col2:
-        st.markdown("#### 📈 **槓桿回測**")
-        if st.session_state[KEY_BT]:
-            bt = st.session_state[KEY_BT]
-            c1,c2,c3,c4 = st.columns(4)
-            with c1: st.metric("勝率", f"{bt['win_rate']}%")
-            with c2: st.metric("報酬", f"{bt['avg_return']}%")
-            with c3: st.metric("夏普", f"{bt['sharpe']:.2f}")
-            with c4: st.caption(f"{bt['trades']}日 {bt['lev']}x")
-            if st.button("清除", key="clrbt_v187"): st.session_state[KEY_BT] = None; st.rerun()
-        else: st.info("點回測")
+    # 回測面板
+    with col_right:
+        st.markdown("#### 📈 **回測**")
+        if st.session_state['backtest_lev_v188']:
+            bt=st.session_state['backtest_lev_v188']
+            c1,c2,c3=st.columns(3)
+            with c1:st.metric("勝率",f"{bt['win_rate']}%")
+            with c2:st.metric("報酬",f"{bt['avg_return']}%")
+            with c3:st.metric("夏普",f"{bt['sharpe']:.1f}")
+            st.caption(f"{bt['trades']}日 {bt['lev']}x")
+            if st.button("X",key="clbt_v188"):st.session_state['backtest_lev_v188']=None;st.rerun()
+        else:st.info("點回測")
 
     st.markdown("---")
-    st.markdown("""
-    **真槓桿模擬**：台指漲跌×Delta×槓桿 - 時間衰減 | 內嵌60日數據
-    **綠燈**：勝率>55% + 夏普>0.5 → 可考慮
-    """)
+    st.markdown("**台指×槓桿模擬** | 內嵌數據 | 夏普>0.5為佳")
 
 
 
