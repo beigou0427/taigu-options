@@ -236,11 +236,6 @@ tabs = st.tabs(tabnames)
 
 
 #        
-
-
-# --------------------------
-# Tab 2: 槓桿篩選版 v18.5 (回歸槓桿操作 + LEAPS CALL)
-# --------------------------
 # ── 放在所有 tabs 外面（檔案最上方）──────────────────────────────────────
 from supabase import create_client
 
@@ -342,115 +337,116 @@ with tabs[0]:
     # ════ 左欄：免費槓桿掃描 ════════════════════════════════════════════
     with col_search:
         st.markdown("#### 🔍 **免費槓桿掃描 (LEAPS CALL優化)** 💰")
+
+        # ✅ 改成 warning 不 stop，讓右欄 Email 功能繼續跑
         if df_latest.empty:
-            st.error("⚠️ 無最新資料，請檢查數據源")
-            st.stop()
+            st.warning("⚠️ 無最新資料，掃描功能暫停，但Email開通正常")
+        else:
+            df_work = df_latest.copy()
+            df_work['call_put'] = df_work['call_put'].str.upper().str.strip()
+            for col in ['close', 'volume', 'strike_price']:
+                df_work[col] = pd.to_numeric(df_work[col], errors='coerce').fillna(0)
 
-        df_work = df_latest.copy()
-        df_work['call_put'] = df_work['call_put'].str.upper().str.strip()
-        for col in ['close', 'volume', 'strike_price']:
-            df_work[col] = pd.to_numeric(df_work[col], errors='coerce').fillna(0)
+            c1, c2, c3, c4 = st.columns([1, 1, 1, 0.6])
+            with c1:
+                dir_mode = st.selectbox("📊 方向", ["📈 CALL (LEAPS)", "📉 PUT"], 0, key="v191_dir")
+                op_type  = "CALL" if "CALL" in dir_mode else "PUT"
+            with c2:
+                contracts   = df_work[df_work['call_put'] == op_type]['contract_date'].dropna()
+                available   = sorted(contracts[contracts.astype(str).str.len() == 6].unique())
+                default_idx = len(available) - 1 if available else 0
+                sel_con = st.selectbox("📅 月份", available if available else [""], index=default_idx, key="v191_con")
+            with c3:
+                target_lev = st.slider("🎯 目標槓桿", 2.0, 20.0, 5.0, 0.5, key="v191_lev")
+            with c4:
+                if st.button("🧹 重置全部", key="v191_reset_all"):
+                    for k in [KEY_RES, KEY_BEST, KEY_BT]:
+                        st.session_state[k] = None if 'best' in k else []
+                    st.rerun()
 
-        c1, c2, c3, c4 = st.columns([1, 1, 1, 0.6])
-        with c1:
-            dir_mode = st.selectbox("📊 方向", ["📈 CALL (LEAPS)", "📉 PUT"], 0, key="v191_dir")
-            op_type  = "CALL" if "CALL" in dir_mode else "PUT"
-        with c2:
-            contracts   = df_work[df_work['call_put'] == op_type]['contract_date'].dropna()
-            available   = sorted(contracts[contracts.astype(str).str.len() == 6].unique())
-            default_idx = len(available) - 1 if available else 0
-            sel_con = st.selectbox("📅 月份", available if available else [""], index=default_idx, key="v191_con")
-        with c3:
-            target_lev = st.slider("🎯 目標槓桿", 2.0, 20.0, 5.0, 0.5, key="v191_lev")
-        with c4:
-            if st.button("🧹 重置全部", key="v191_reset_all"):
-                for k in [KEY_RES, KEY_BEST, KEY_BT]:
-                    st.session_state[k] = None if 'best' in k else []
-                st.rerun()
-
-        if st.button("🚀 智慧掃描", type="primary", use_container_width=True, key="v191_scan"):
-            st.session_state[KEY_RES]  = []
-            st.session_state[KEY_BEST] = None
-            st.session_state[KEY_BT]   = None
-            if sel_con and len(str(sel_con)) == 6:
-                tdf = df_work[
-                    (df_work["contract_date"].astype(str) == sel_con) &
-                    (df_work["call_put"] == op_type)
-                ]
-                if tdf.empty:
-                    st.warning("⚠️ 無此合約交易資料")
-                else:
-                    try:
-                        y, m = int(str(sel_con)[:4]), int(str(sel_con)[4:6])
-                        days_to_exp = max((date(y, m, 15) - latest_date.date()).days, 1)
-                        T_years     = days_to_exp / 365.0
-                    except Exception as e:
-                        st.error(f"日期解析失敗: {e}")
-                        st.stop()
-
-                    raw_results = []
-                    for _, row in tdf.iterrows():
-                        try:
-                            strike      = float(row["strike_price"])
-                            volume      = float(row["volume"])
-                            close_price = float(row["close"])
-                            if strike <= 0: continue
-                            try:
-                                r, vola = 0.02, 0.2
-                                d1    = (np.log(S_current / strike) + (r + 0.5 * vola**2) * T_years) / (vola * np.sqrt(T_years))
-                                delta = norm.cdf(d1) if op_type == "CALL" else -norm.cdf(-d1)
-                            except:
-                                delta = 0.5
-                            bs_price = (abs(delta) * S_current) / target_lev
-                            price    = close_price if volume > 0 else bs_price
-                            if price <= 0.5 or abs(delta) < 0.1: continue
-                            leverage = (abs(delta) * S_current) / price
-                            score    = calculate_raw_score_v191(delta, days_to_exp, volume, S_current, strike, op_type)
-                            raw_results.append({
-                                "履約價": int(strike),   "價格": round(price, 1),
-                                "狀態":   "🟢成交" if volume > 0 else "🔵合理價",
-                                "槓桿":   leverage,      "Delta": round(delta, 3),
-                                "raw_score": score,      "Vol":   int(volume),
-                                "差距":   abs(leverage - target_lev),
-                                "合約":   sel_con,       "類型":  op_type,
-                                "天數":   days_to_exp
-                            })
-                        except:
-                            continue
-
-                    if raw_results:
-                        final_results = micro_expand_scores_v191(raw_results)
-                        final_results.sort(key=lambda x: (x['差距'], -x['勝率'], -x['天數']))
-                        st.session_state[KEY_RES]  = final_results[:15]
-                        st.session_state[KEY_BEST] = final_results[0]
-                        st.success(f"✅ 掃描完成！最佳槓桿：{final_results[0]['槓桿']:.1f}x | 勝率：{final_results[0]['勝率']}%")
+            if st.button("🚀 智慧掃描", type="primary", use_container_width=True, key="v191_scan"):
+                st.session_state[KEY_RES]  = []
+                st.session_state[KEY_BEST] = None
+                st.session_state[KEY_BT]   = None
+                if sel_con and len(str(sel_con)) == 6:
+                    tdf = df_work[
+                        (df_work["contract_date"].astype(str) == sel_con) &
+                        (df_work["call_put"] == op_type)
+                    ]
+                    if tdf.empty:
+                        st.warning("⚠️ 無此合約交易資料")
                     else:
-                        st.warning("⚠️ 無符合條件的優質合約")
+                        try:
+                            y, m = int(str(sel_con)[:4]), int(str(sel_con)[4:6])
+                            days_to_exp = max((date(y, m, 15) - latest_date.date()).days, 1)
+                            T_years     = days_to_exp / 365.0
+                        except Exception as e:
+                            st.error(f"日期解析失敗: {e}")
+                            st.stop()
 
-        if st.session_state[KEY_RES]:
-            best_contract = st.session_state[KEY_BEST]
-            st.markdown("─" * 60)
-            st.markdown("#### 🏆 **🔥 最佳LEAPS CALL推薦**")
-            st.markdown(f"""
-            <div style='background: linear-gradient(90deg, #10b981, #059669);
-                        color: white; padding: 1rem; border-radius: 12px; text-align: center;'>
-                <h3><b>{best_contract['合約']} {best_contract['履約價']} {best_contract['類型']}</b></h3>
-                <h2>權利金：{int(round(best_contract['價格']))}點</h2>
-                <p>槓桿：<b>{best_contract['槓桿']:.1f}x</b> | 勝率：<b>{best_contract['勝率']:.1f}%</b> | Delta：<b>{best_contract['Delta']}</b></p>
-                <p>到期：<b>{best_contract['天數']}天</b> | 狀態：<span style='color:yellow'>{best_contract['狀態']}</span></p>
-            </div>
-            """, unsafe_allow_html=True)
-            with st.expander(f"📋 Top15完整結果 ({len(st.session_state[KEY_RES])}筆)", expanded=True):
-                df_display = pd.DataFrame(st.session_state[KEY_RES]).copy()
-                df_display['權利金'] = df_display['價格'].round(0).astype(int)
-                df_display['槓桿']   = df_display['槓桿'].apply(lambda x: f"{x:.1f}x")
-                df_display['Delta']  = df_display['Delta'].apply(lambda x: f"{x:.3f}")
-                df_display['勝率']   = df_display['勝率'].apply(lambda x: f"{x:.1f}%")
-                df_display['天數']   = df_display['天數'].astype(int)
-                st.dataframe(
-                    df_display[["合約","履約價","權利金","槓桿","勝率","Delta","天數","狀態"]],
-                    use_container_width=True, hide_index=True
-                )
+                        raw_results = []
+                        for _, row in tdf.iterrows():
+                            try:
+                                strike      = float(row["strike_price"])
+                                volume      = float(row["volume"])
+                                close_price = float(row["close"])
+                                if strike <= 0: continue
+                                try:
+                                    r, vola = 0.02, 0.2
+                                    d1    = (np.log(S_current / strike) + (r + 0.5 * vola**2) * T_years) / (vola * np.sqrt(T_years))
+                                    delta = norm.cdf(d1) if op_type == "CALL" else -norm.cdf(-d1)
+                                except:
+                                    delta = 0.5
+                                bs_price = (abs(delta) * S_current) / target_lev
+                                price    = close_price if volume > 0 else bs_price
+                                if price <= 0.5 or abs(delta) < 0.1: continue
+                                leverage = (abs(delta) * S_current) / price
+                                score    = calculate_raw_score_v191(delta, days_to_exp, volume, S_current, strike, op_type)
+                                raw_results.append({
+                                    "履約價": int(strike),   "價格": round(price, 1),
+                                    "狀態":   "🟢成交" if volume > 0 else "🔵合理價",
+                                    "槓桿":   leverage,      "Delta": round(delta, 3),
+                                    "raw_score": score,      "Vol":   int(volume),
+                                    "差距":   abs(leverage - target_lev),
+                                    "合約":   sel_con,       "類型":  op_type,
+                                    "天數":   days_to_exp
+                                })
+                            except:
+                                continue
+
+                        if raw_results:
+                            final_results = micro_expand_scores_v191(raw_results)
+                            final_results.sort(key=lambda x: (x['差距'], -x['勝率'], -x['天數']))
+                            st.session_state[KEY_RES]  = final_results[:15]
+                            st.session_state[KEY_BEST] = final_results[0]
+                            st.success(f"✅ 掃描完成！最佳槓桿：{final_results[0]['槓桿']:.1f}x | 勝率：{final_results[0]['勝率']}%")
+                        else:
+                            st.warning("⚠️ 無符合條件的優質合約")
+
+            if st.session_state[KEY_RES]:
+                best_contract = st.session_state[KEY_BEST]
+                st.markdown("─" * 60)
+                st.markdown("#### 🏆 **🔥 最佳LEAPS CALL推薦**")
+                st.markdown(f"""
+                <div style='background: linear-gradient(90deg, #10b981, #059669);
+                            color: white; padding: 1rem; border-radius: 12px; text-align: center;'>
+                    <h3><b>{best_contract['合約']} {best_contract['履約價']} {best_contract['類型']}</b></h3>
+                    <h2>權利金：{int(round(best_contract['價格']))}點</h2>
+                    <p>槓桿：<b>{best_contract['槓桿']:.1f}x</b> | 勝率：<b>{best_contract['勝率']:.1f}%</b> | Delta：<b>{best_contract['Delta']}</b></p>
+                    <p>到期：<b>{best_contract['天數']}天</b> | 狀態：<span style='color:yellow'>{best_contract['狀態']}</span></p>
+                </div>
+                """, unsafe_allow_html=True)
+                with st.expander(f"📋 Top15完整結果 ({len(st.session_state[KEY_RES])}筆)", expanded=True):
+                    df_display = pd.DataFrame(st.session_state[KEY_RES]).copy()
+                    df_display['權利金'] = df_display['價格'].round(0).astype(int)
+                    df_display['槓桿']   = df_display['槓桿'].apply(lambda x: f"{x:.1f}x")
+                    df_display['Delta']  = df_display['Delta'].apply(lambda x: f"{x:.3f}")
+                    df_display['勝率']   = df_display['勝率'].apply(lambda x: f"{x:.1f}%")
+                    df_display['天數']   = df_display['天數'].astype(int)
+                    st.dataframe(
+                        df_display[["合約","履約價","權利金","槓桿","勝率","Delta","天數","狀態"]],
+                        use_container_width=True, hide_index=True
+                    )
 
     # ════ 右欄：Email付費回測 ═══════════════════════════════════════════
     with col_backtest:
@@ -470,7 +466,6 @@ with tabs[0]:
                 if '@' in email_entered and '.' in email_entered.split('@')[-1]:
                     st.session_state[KEY_EMAIL] = email_entered
                     st.session_state[KEY_USES]  = 0
-                    # 🔥 Supabase 寫入（顯示詳細錯誤）
                     try:
                         sb  = init_supabase()
                         res = sb.table("vips").insert({
@@ -480,7 +475,7 @@ with tabs[0]:
                         }).execute()
                         st.success(f"🎉 {email_entered} 授權成功！VIP ID:{res.data[0]['id']}")
                     except Exception as e:
-                        st.error(f"❌ DB錯誤（請截圖給開發者）：{e}")
+                        st.error(f"❌ DB錯誤：{e}")
                     st.balloons()
                     st.rerun()
                 else:
@@ -605,6 +600,3 @@ with tabs[0]:
     ⚠️ **僅供學習研究，非投資建議** | 實際交易請諮詢專業顧問
     """)
     st.caption("© 貝伊果屋 2026 | mintung.chen@beigou.tw")
-
-
-
