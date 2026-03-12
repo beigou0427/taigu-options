@@ -502,36 +502,29 @@ with tabs[0]:
                 help="輸入後點「開通」→ 每日3次真實回測 + v20 Beta資格",
                 key="email_entry_v191"
             )
-                col_email_input, col_email_btn = st.columns([3, 1])
-        with col_email_input:
-            email_entered = st.text_input(
-                "📧 開通授權Email", 
-                value=st.session_state[KEY_EMAIL],
-                placeholder="your@email.com (Threads專屬更新)",
-                help="輸入後點「開通」→ 每日3次真實回測 + v20 Beta資格",
-                key="email_entry_v191"
-            )
         with col_email_btn:
-            if st.button("✅ 立即開通", type="secondary", use_container_width=True, key="email_auth_v191"):
-                if '@' in email_entered and '.' in email_entered.split('@')[-1]:
-                    st.session_state[KEY_EMAIL] = email_entered
-                    st.session_state[KEY_USES] = 0
-                    
-                    # 🔥 Supabase
-                    try:
-                        supabase = init_supabase()
-                        data = {"email": email_entered, "uses": 0, "source": "v19.1"}
-                        supabase.table("vips").insert(data).execute()
-                    except:
-                        pass
-                    
-                    st.success(f"🎉 {email_entered} 授權成功！剩餘3/3次")
-                    st.balloons()
-                    st.rerun()
-                else:
-                    st.error("❌ Email格式錯誤")
-
-
+    if st.button("✅ 立即開通", type="secondary", use_container_width=True, key="email_auth_v191"):
+        if '@' in email_entered and '.' in email_entered.split('@')[-1]:
+            st.session_state[KEY_EMAIL] = email_entered
+            st.session_state[KEY_USES] = 0  # 重置今日額度
+            
+            # 🔥 🔥 🔥 加這段：寫入 Supabase
+            try:
+                supabase = init_supabase()  # 上面已定義
+                data = {
+                    "email": email_entered,
+                    "uses": 0,
+                    "source": "貝伊果屋 v19.1"
+                }
+                response = supabase.table("vips").insert(data).execute()
+                st.success(f"🎉 {email_entered} 授權成功！VIP ID: {response.data[0]['id']}")
+            except Exception as e:
+                st.warning(f"DB 寫入：{e}")  # 失敗不影響主功能
+            
+            st.balloons()
+            st.rerun()
+        else:
+            st.error("❌ Email格式錯誤 (需包含@和.)")
 
 
         # Email狀態檢查
@@ -674,6 +667,4 @@ with tabs[0]:
     ⚠️ **僅供學習研究，非投資建議** | 實際交易請諮詢專業顧問
     """)
     st.caption("© 貝伊果屋 2026 | mintung.chen@beigou.tw")
-
-
 
