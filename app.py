@@ -235,7 +235,6 @@ tabs = st.tabs(tabnames)
 #========= Tab 0 =========
 
 
-#        
 # ── 放在所有 tabs 外面（檔案最上方）──────────────────────────────────────
 from supabase import create_client
 
@@ -255,12 +254,14 @@ with tabs[0]:
     KEY_BT    = "backtest_lev_v191"
     KEY_EMAIL = "email_v191"
     KEY_USES  = "bt_uses_v191"
+    KEY_ERR   = "db_error_v191"   # 🔥 新增：記錄錯誤訊息
 
     if KEY_RES   not in st.session_state: st.session_state[KEY_RES]   = []
     if KEY_BEST  not in st.session_state: st.session_state[KEY_BEST]  = None
     if KEY_BT    not in st.session_state: st.session_state[KEY_BT]    = None
     if KEY_EMAIL not in st.session_state: st.session_state[KEY_EMAIL] = ""
     if KEY_USES  not in st.session_state: st.session_state[KEY_USES]  = 0
+    if KEY_ERR   not in st.session_state: st.session_state[KEY_ERR]   = ""
 
     st.markdown("### ♟️ **貝伊果屋專業戰情室 v19.1 (付費回測)**")
     col_search, col_backtest = st.columns([1.3, 0.7])
@@ -338,7 +339,6 @@ with tabs[0]:
     with col_search:
         st.markdown("#### 🔍 **免費槓桿掃描 (LEAPS CALL優化)** 💰")
 
-        # ✅ 改成 warning 不 stop，讓右欄 Email 功能繼續跑
         if df_latest.empty:
             st.warning("⚠️ 無最新資料，掃描功能暫停，但Email開通正常")
         else:
@@ -452,6 +452,13 @@ with tabs[0]:
     with col_backtest:
         st.markdown("#### 🔒 **貝伊果屋付費回測引擎 (每日3次免費)** 💎")
 
+        # 🔥 錯誤訊息持久顯示（rerun 後還在）
+        if st.session_state[KEY_ERR]:
+            st.error(f"❌ DB錯誤：{st.session_state[KEY_ERR]}")
+            if st.button("🗑️ 清除錯誤", key="clear_err_v191"):
+                st.session_state[KEY_ERR] = ""
+                st.rerun()
+
         col_email_input, col_email_btn = st.columns([3, 1])
         with col_email_input:
             email_entered = st.text_input(
@@ -466,6 +473,7 @@ with tabs[0]:
                 if '@' in email_entered and '.' in email_entered.split('@')[-1]:
                     st.session_state[KEY_EMAIL] = email_entered
                     st.session_state[KEY_USES]  = 0
+                    st.session_state[KEY_ERR]   = ""
                     try:
                         sb  = init_supabase()
                         res = sb.table("vips").insert({
@@ -473,13 +481,18 @@ with tabs[0]:
                             "uses":   0,
                             "source": "v19.1"
                         }).execute()
-                        st.success(f"🎉 {email_entered} 授權成功！VIP ID:{res.data[0]['id']}")
+                        # 🔥 成功也存 session_state，rerun 後仍顯示
+                        st.session_state["vip_success"] = f"🎉 {email_entered} 授權成功！VIP ID:{res.data[0]['id']}"
                     except Exception as e:
-                        st.error(f"❌ DB錯誤：{e}")
+                        st.session_state[KEY_ERR] = str(e)  # 存錯誤，rerun 後還在
                     st.balloons()
                     st.rerun()
                 else:
                     st.error("❌ Email格式錯誤 (需包含@和.)")
+
+        # 🔥 成功訊息持久顯示
+        if st.session_state.get("vip_success"):
+            st.success(st.session_state["vip_success"])
 
         email_authorized = bool(st.session_state[KEY_EMAIL] and '@' in st.session_state[KEY_EMAIL])
         daily_quota      = 3
@@ -600,3 +613,4 @@ with tabs[0]:
     ⚠️ **僅供學習研究，非投資建議** | 實際交易請諮詢專業顧問
     """)
     st.caption("© 貝伊果屋 2026 | mintung.chen@beigou.tw")
+
