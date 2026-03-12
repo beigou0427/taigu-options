@@ -38,3 +38,5 @@ branca>=0.6.0
 # Optional
 yfinance>=0.2.40
 wordcloud>=1.9.0
+
+supabase==2.12.0
