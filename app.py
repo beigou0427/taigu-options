@@ -244,9 +244,7 @@ tabs = st.tabs(tabnames)
 # ==========================
 # ✅ 完整 Tab 0: 槓桿篩選 + LEAPS CALL 回測版 v185
 # Tab 0 v19.1: 槓桿篩選 + Email付費回測 (貝伊果屋版)
-# ──────────────────────────────────────────────────────────────────────────
-# Supabase 初始化（放在 with tabs[0]: 外面，檔案最上方）
-# ──────────────────────────────────────────────────────────────────────────
+# ── 放在所有 tabs 外面（檔案最上方）──────────────────────────────────────
 from supabase import create_client
 
 @st.cache_resource
@@ -256,13 +254,13 @@ def init_supabase():
         st.secrets["SUPABASE_ANON_KEY"]
     )
 
-# ──────────────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════
 # Tab 0
-# ──────────────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════
 with tabs[0]:
-    KEY_RES  = "results_lev_v191"
-    KEY_BEST = "best_lev_v191"
-    KEY_BT   = "backtest_lev_v191"
+    KEY_RES   = "results_lev_v191"
+    KEY_BEST  = "best_lev_v191"
+    KEY_BT    = "backtest_lev_v191"
     KEY_EMAIL = "email_v191"
     KEY_USES  = "bt_uses_v191"
 
@@ -275,7 +273,6 @@ with tabs[0]:
     st.markdown("### ♟️ **貝伊果屋專業戰情室 v19.1 (付費回測)**")
     col_search, col_backtest = st.columns([1.3, 0.7])
 
-    # ── 評分函數 ──────────────────────────────────────────────────────────
     def calculate_raw_score_v191(delta, days, volume, S, K, op_type):
         s_delta = abs(delta) * 100.0
         m = (S - K) / S if op_type == "CALL" else (K - S) / S
@@ -284,7 +281,6 @@ with tabs[0]:
         s_vol   = min(volume / 5000.0 * 100, 100)
         return s_delta * 0.4 + s_money * 0.2 + s_time * 0.2 + s_vol * 0.2
 
-    # ── 微觀勝率展開 ──────────────────────────────────────────────────────
     def micro_expand_scores_v191(results):
         if not results: return []
         results.sort(key=lambda x: x['raw_score'], reverse=True)
@@ -300,7 +296,6 @@ with tabs[0]:
             results[i]['勝率'] = round(score, 1)
         return results
 
-    # ── 回測函數 ──────────────────────────────────────────────────────────
     @st.cache_data(ttl=3600)
     def backtest_taiex_leverage_v191(lev, days, token):
         try:
@@ -364,8 +359,8 @@ with tabs[0]:
             dir_mode = st.selectbox("📊 方向", ["📈 CALL (LEAPS)", "📉 PUT"], 0, key="v191_dir")
             op_type  = "CALL" if "CALL" in dir_mode else "PUT"
         with c2:
-            contracts  = df_work[df_work['call_put'] == op_type]['contract_date'].dropna()
-            available  = sorted(contracts[contracts.astype(str).str.len() == 6].unique())
+            contracts   = df_work[df_work['call_put'] == op_type]['contract_date'].dropna()
+            available   = sorted(contracts[contracts.astype(str).str.len() == 6].unique())
             default_idx = len(available) - 1 if available else 0
             sel_con = st.selectbox("📅 月份", available if available else [""], index=default_idx, key="v191_con")
         with c3:
@@ -469,7 +464,7 @@ with tabs[0]:
             email_entered = st.text_input(
                 "📧 開通授權Email",
                 value=st.session_state[KEY_EMAIL],
-                placeholder="your@email.com (Threads專屬更新)",
+                placeholder="your@email.com",
                 help="輸入後點「開通」→ 每日3次真實回測 + v20 Beta資格",
                 key="email_entry_v191"
             )
@@ -478,6 +473,7 @@ with tabs[0]:
                 if '@' in email_entered and '.' in email_entered.split('@')[-1]:
                     st.session_state[KEY_EMAIL] = email_entered
                     st.session_state[KEY_USES]  = 0
+                    # 🔥 Supabase 寫入（顯示詳細錯誤）
                     try:
                         sb  = init_supabase()
                         res = sb.table("vips").insert({
@@ -487,7 +483,7 @@ with tabs[0]:
                         }).execute()
                         st.success(f"🎉 {email_entered} 授權成功！VIP ID:{res.data[0]['id']}")
                     except Exception as e:
-                        st.error(f"❌ DB錯誤：{e}")
+                        st.error(f"❌ DB錯誤（請截圖給開發者）：{e}")
                     st.balloons()
                     st.rerun()
                 else:
@@ -608,13 +604,10 @@ with tabs[0]:
     st.markdown("---")
     st.markdown("""
     **貝伊果屋 (@beigou0427)** | Build: 2026/3/12 v19.1  
-    💬 Threads每日LEAPS策略 | 🚀 v20.0即將上線(12因子+AI供應鏈)
+    💬 Threads每日LEAPS策略 | 🚀 v20.0即將上線(12因子+AI供應鏈)  
     ⚠️ **僅供學習研究，非投資建議** | 實際交易請諮詢專業顧問
     """)
     st.caption("© 貝伊果屋 2026 | mintung.chen@beigou.tw")
-
-
-
 
 
 
