@@ -20,6 +20,19 @@ from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 import random
 import httpx
+# 開頭加這段（import）
+from supabase import create_client
+from datetime import date
+import streamlit as st
+
+@st.cache_resource
+def init_supabase():
+    return create_client(
+        st.secrets["SUPABASE_URL"],
+        st.secrets["SUPABASE_ANON_KEY"]
+    )
+
+
 
 
 # =========================================
@@ -640,3 +653,4 @@ with tabs[0]:
     ⚠️ **僅供學習研究，非投資建議** | 實際交易請諮詢專業顧問
     """)
     st.caption("© 貝伊果屋 2026 | mintung.chen@beigou.tw")
+
