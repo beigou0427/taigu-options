@@ -465,10 +465,10 @@ with tabs[0]:
                 key="email_entry_v191"
             )
         with col_email_btn:
-    if st.button("✅ 立即開通", type="secondary", use_container_width=True, key="email_auth_v191"):
-          if '@' in email_entered and '.' in email_entered.split('@')[-1]:
-              st.session_state[KEY_EMAIL] = email_entered
-              st.session
+            if st.button("✅ 立即開通", type="secondary", use_container_width=True, key="email_auth_v191"):
+                  if '@' in email_entered and '.' in email_entered.split('@')[-1]:
+                      st.session_state[KEY_EMAIL] = email_entered
+                      st.session
 
                     # 🔥 寫入 Supabase
                     try:
@@ -580,6 +580,7 @@ with tabs[0]:
     ⚠️ **僅供學習研究，非投資建議** | 實際交易請諮詢專業顧問
     """)
     st.caption("© 貝伊果屋 2026 | mintung.chen@beigou.tw")
+
 
 
 
